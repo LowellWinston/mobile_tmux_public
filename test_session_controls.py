@@ -155,6 +155,15 @@ class SessionControlTests(unittest.TestCase):
                     terminal.create_session(name, '/tmp', run=run)
                 run.assert_not_called()
 
+    @staticmethod
+    def wait_until(condition, timeout=10):
+        # Real tmux and bash timing varies a lot on a busy CI runner, so poll instead of sleeping a fixed time.
+        deadline = time.monotonic() + timeout
+        while not condition():
+            if time.monotonic() > deadline:
+                raise AssertionError('Timed out waiting for the shell.')
+            time.sleep(.05)
+
     def test_real_tmux_session_creation_and_no_agent_commands(self):
         with tempfile.TemporaryDirectory() as folder:
             folder = Path(folder)
@@ -165,17 +174,19 @@ class SessionControlTests(unittest.TestCase):
                 return subprocess.run(['tmux', '-S', socket, *argv[1:]], **kwargs)
             try:
                 pane = terminal.create_session('work', str(folder), run=run)
-                time.sleep(.3)
                 pid = int(run(['/usr/bin/tmux', 'display-message', '-p', '-t', pane, '#{pane_pid}'], capture_output=True, text=True).stdout)
                 entry = {'id': pane, 'agent': 'shell', 'pane_pid': pid, 'pane_start': terminal.process_start(pid)}
                 with self.assertRaises(RuntimeError):
                     terminal.create_session('work', str(folder), run=run)
+                self.wait_until(lambda: terminal.shell_prompt(entry, run).endswith('$'))
                 terminal.shell_submit(entry, 'cd child', run=run)
-                time.sleep(.15)
-                cwd = run(['/usr/bin/tmux', 'display-message', '-p', '-t', pane, '#{pane_current_path}'], capture_output=True, text=True).stdout.strip()
-                self.assertEqual(cwd, str(folder / 'child'))
+                current = lambda: run(['/usr/bin/tmux', 'display-message', '-p', '-t', pane, '#{pane_current_path}'], capture_output=True, text=True).stdout.strip()
+                self.wait_until(lambda: current() == str(folder / 'child'))
+                self.assertEqual(current(), str(folder / 'child'))
+                self.wait_until(lambda: terminal.shell_prompt(entry, run).endswith('$'))
                 terminal.shell_submit(entry, 'printf shell-command-ok > result.txt', run=run)
-                time.sleep(.15)
+                self.wait_until(lambda: (folder / 'child/result.txt').exists())
+                self.wait_until(lambda: terminal.shell_prompt(entry, run).endswith('$'))
                 self.assertEqual((folder / 'child/result.txt').read_text(), 'shell-command-ok')
                 run(['/usr/bin/tmux', 'send-keys', '-t', pane, '-l', 'keep this draft'], check=True)
                 time.sleep(.1)
