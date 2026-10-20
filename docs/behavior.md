@@ -11,8 +11,9 @@ show 5-hour allowance, weekly allowance, and context use; tap for figures and re
 The + control creates a new detached tmux session in the selected pane’s directory.
 Duplicate names are rejected. Choose No agent on an idle shell tab for compact command/output
 mode: enter commands directly, without a ! prefix. Shell cd commands persist in that pane.
-Full-screen interactive programs still require an interactive terminal. User messages render in light blue as plain `> message` prompts without bubble borders or padding. The composer expands while typing; desktop Enter sends,
-Shift+Enter inserts a newline, and mobile Enter inserts a newline.
+Full-screen interactive programs still require an interactive terminal. User messages render in light blue as plain `> message` prompts without bubble borders or padding. The composer expands while typing; by default desktop Enter sends
+and mobile Enter inserts a newline; Shift+Enter always inserts a newline. The + menu has an
+"Enter sends" toggle (saved in the browser) that overrides the default on any device.
 
 The + button beside the composer opens a three-item menu: Photo or file, Dictate, and Terminal (the live screen, with its Interact option). While dictating, the button shows a pulsing microphone and one tap stops it. Photo or file uploads to `/mobile/api/upload` (raw body, 20 MB limit, bound to the selected session and conversation, agent tabs only) and shows the file as a removable chip above the composer. On Send the saved paths are put in front of the typed text as plain paths, and the chips clear. A chip belongs to the tab it was picked in. JPEG, HEIC and oversized images are redrawn first (longest side 2400 px), which drops camera metadata; PNG screenshots, GIFs and other files go up unchanged. On desktop browsers, pasting an image (Ctrl/Cmd+V) anywhere on the page attaches it, except inside some other text field, and dropping files on the page does too. Files live in `~/.cache/mobile-tmux/uploads/` and are deleted after seven days.
 

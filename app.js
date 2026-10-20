@@ -1023,9 +1023,21 @@ document.querySelector('#new-session-form').addEventListener('submit', async eve
   } catch (error) { document.querySelector('#session-error').textContent = error.message; }
   finally { button.disabled = false; }
 });
+function enterPref() { try { return localStorage.getItem('enter-sends'); } catch { return null; } }
+function enterSends() {
+  const pref = enterPref();
+  return pref === 'on' || (pref !== 'off' && matchMedia('(min-width: 768px) and (pointer: fine)').matches);
+}
+const enterToggle = document.querySelector('#menu-enter');
+function renderEnterToggle() { enterToggle.textContent = enterSends() ? '⏎ Enter sends: on' : '⏎ Enter sends: off'; }
+enterToggle.addEventListener('click', () => {
+  try { localStorage.setItem('enter-sends', enterSends() ? 'off' : 'on'); } catch {}
+  renderEnterToggle();
+});
+renderEnterToggle();
 input.addEventListener('keydown', event => {
   if (event.key === 'Enter' && !event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey &&
-      !event.isComposing && event.keyCode !== 229 && matchMedia('(min-width: 768px) and (pointer: fine)').matches) {
+      !event.isComposing && event.keyCode !== 229 && enterSends()) {
     event.preventDefault(); document.querySelector('#compose').requestSubmit();
   }
 });
