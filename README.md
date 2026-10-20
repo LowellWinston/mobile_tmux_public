@@ -12,6 +12,8 @@ Start [Claude Code](https://claude.com/claude-code), [Codex CLI](https://github.
 - **All your agents in one place.** Switch between sessions as tabs, see which one is waiting for you, and get a push notification when one needs you.
 - **Your machine, your data.** It runs on your computer. Nothing goes through anyone else's server, and there is no account.
 
+<p align="center"><img src="docs/demo.gif" width="300" alt="On a phone: attach a screenshot of an error, send it to Claude Code, approve its edit and its test run, and read the result"><br><sub>Attach a screenshot of an error, approve the fix and the test run, read the result. All from the phone. (<a href="docs/demo.mp4">MP4</a>)</sub></p>
+
 This is a phone front end for the tmux sessions that run your agents and shells: type `!command` to run a shell command in a session's folder, or open a plain shell tab with no agent. It is not a general tmux client: it has no windows, splits or layouts, and does not plan to.
 
 ## Screenshots
