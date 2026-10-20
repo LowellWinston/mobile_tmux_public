@@ -480,6 +480,14 @@ class SuggestionTests(unittest.TestCase):
             run = lambda argv, hint=hint, **kwargs: __import__('types').SimpleNamespace(stdout=self.styled('\x1b[2m' + hint + '\x1b[0m'), returncode=0)
             self.assertEqual(terminal.suggestion(self.CLAUDE, run), '')
 
+    def test_live_status_for_a_claude_with_no_conversation_yet(self):
+        # A fresh Claude has no registry file yet; this used to raise KeyError and kill the background monitor.
+        entry = dict(self.CLAUDE, owner_pid=1, writable=True, pending_conversation=True)
+        self.assertNotIn('registry', entry)
+        run = lambda argv, **kwargs: __import__('types').SimpleNamespace(stdout='❯ \n', returncode=0)
+        with patch.object(terminal, 'capture_quota_notices'):
+            self.assertEqual(terminal.live_status(entry, run)['state'], 'Idle')
+
     def test_live_status_exposes_suggestion_only_when_idle(self):
         entry = dict(self.CLAUDE, owner_pid=1, writable=True, registry='/nonexistent')
         screen = 'done\n' + '\u2500' * 8 + '\n\u276f\xa0push it\n' + '\u2500' * 8 + '\n  auto mode on\n'

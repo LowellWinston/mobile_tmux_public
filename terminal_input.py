@@ -214,7 +214,7 @@ def live_status(entry, run=subprocess.run):
     working = bool(re.search(r'Working \(|esc to interrupt|(?m:^\s*[✻✶✽✢·*●]\s+[A-Z][a-z]+(?:ing|ed)?…)', screen, re.I))
     if entry['agent'] == 'codex':
         working = working or transcript_busy(entry.get('transcript'))
-    if entry['agent'] == 'claude':
+    if entry['agent'] == 'claude' and entry.get('registry'):  # a Claude with no conversation yet has no registry
         try:
             working = working or json.loads(Path(entry['registry']).read_text()).get('status') == 'busy'
         except (OSError, ValueError):

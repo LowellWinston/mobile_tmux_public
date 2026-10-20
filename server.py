@@ -62,7 +62,7 @@ def monitor_notices():
             try:
                 if entry.get('owner_pid') and entry.get('writable'):
                     NOTIFIER.observe(entry, live_status(entry))
-            except (OSError, ValueError, subprocess.SubprocessError):
+            except Exception:  # one odd pane must never stop the monitor for everyone
                 continue
         time.sleep(2)
 
