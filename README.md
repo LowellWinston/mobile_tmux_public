@@ -123,6 +123,12 @@ conversation, and that the input box is empty, so it never overwrites something 
 - Two Codex sessions in the same folder cannot be told apart, so the second one is read-only.
 - Tool output and the agent's reasoning are deliberately left out of the chat.
 
+## Questions, ideas and bugs
+
+Questions, setup help and ideas belong in [Discussions](https://github.com/LowellWinston/mobile_tmux_public/discussions).
+Bugs go in [Issues](https://github.com/LowellWinston/mobile_tmux_public/issues); please include the agent and its version, and for prompt or
+status-line problems the text of the pane (`tmux capture-pane -p -t <pane>`) with anything private trimmed.
+
 ## Development
 
 ```bash

@@ -1,0 +1,44 @@
+name: Bug report
+description: Something doesn't work, or shows the wrong thing
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. For setup questions or ideas, please use [Discussions](https://github.com/LowellWinston/mobile_tmux_public/discussions) instead.
+        **Do not include your access token, and trim anything private from pasted terminal text.**
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect?
+      description: Include the exact message if the page shows an error.
+    validations:
+      required: true
+  - type: dropdown
+    id: agent
+    attributes:
+      label: Which agent?
+      options: [Claude Code, Codex CLI, Antigravity, Shell tab, Not agent-specific]
+    validations:
+      required: true
+  - type: input
+    id: agent_version
+    attributes:
+      label: Agent version
+      placeholder: "claude --version / codex --version / agy --version"
+  - type: textarea
+    id: pane
+    attributes:
+      label: Terminal text (for prompt, picker or status-line problems)
+      description: "Output of `tmux capture-pane -p -t <pane>` at the moment of the problem. Parsing bugs are much easier to fix with this."
+      render: text
+  - type: input
+    id: setup
+    attributes:
+      label: Server OS and Python version
+      placeholder: "Ubuntu 24.04, Python 3.12"
+  - type: input
+    id: client
+    attributes:
+      label: Phone and browser
+      placeholder: "iPhone 15, Safari / Pixel 8, Chrome / home-screen app"

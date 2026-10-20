@@ -1,0 +1,17 @@
+name: Feature request
+description: Suggest something Mobile Tmux doesn't do yet
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: need
+    attributes:
+      label: What are you trying to do from your phone?
+      description: The situation where you needed it, and what you do today instead.
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would you like it to do?
+    validations:
+      required: false
