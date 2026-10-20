@@ -10,7 +10,7 @@ import subprocess
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, unquote, urlsplit
 
 from agents import claude_snapshot, discover, usage
 from agents import records
@@ -24,6 +24,7 @@ import push
 import shortcuts
 import shell_log
 import terminal_replies
+import uploads
 import auth
 import select
 import socket
@@ -670,7 +671,7 @@ class Handler(BaseHTTPRequestHandler):
             self.do_login()
             return
         if self.path not in ('/mobile/api/message', '/mobile/api/approval', '/mobile/api/start', '/mobile/api/session', '/mobile/api/tmux-sessions', '/mobile/api/key', '/mobile/api/clear-draft', '/mobile/api/type',
-                         '/mobile/api/push/subscribe', '/mobile/api/push/unsubscribe', '/mobile/api/push/test', '/mobile/api/shortcuts', '/mobile/api/model-options', '/mobile/api/model', '/mobile/api/rename', '/mobile/api/shell'):
+                         '/mobile/api/push/subscribe', '/mobile/api/push/unsubscribe', '/mobile/api/push/test', '/mobile/api/shortcuts', '/mobile/api/model-options', '/mobile/api/model', '/mobile/api/rename', '/mobile/api/shell', '/mobile/api/upload'):
             self.respond(404, {'error': 'Not found'})
             return
         # Reject unauthenticated and cross-origin submissions.
@@ -680,6 +681,9 @@ class Handler(BaseHTTPRequestHandler):
         host = self.headers.get('Host', '')
         if not auth.same_origin(origin, host) or self.headers.get('X-Codex-Mobile') != '1':
             self.respond(403, {'error': 'Reload the page and try again.'})
+            return
+        if self.path == '/mobile/api/upload':
+            self.do_upload()
             return
         try:
             size = int(self.headers.get('Content-Length', '0'))
@@ -819,6 +823,28 @@ class Handler(BaseHTTPRequestHandler):
             self.respond(503, {'error': str(exc) if isinstance(exc, RuntimeError)
                                else 'Could not confirm delivery. Check the terminal before retrying.',
                                'draft': isinstance(exc, DraftError)})
+
+    def do_upload(self):
+        """A raw file body for one session; the path of the saved copy goes back so the page can put it in the message."""
+        try:
+            size = int(self.headers.get('Content-Length', '0'))
+            if not 0 < size <= uploads.LIMIT:
+                self.close_connection = True
+                self.respond(413, {'error': 'That file is empty or too large (the limit is %d MB).' % (uploads.LIMIT // 1024 // 1024)})
+                return
+            config = choose(self.headers.get('X-Session'))
+            if self.headers.get('X-Thread') != config.get('thread'):
+                self.respond(409, {'error': 'This session changed conversations. Reload its tab before attaching.'})
+                return
+            if not config.get('writable') or config['agent'] == 'shell':
+                raise RuntimeError('Attachments need a running agent in this session.')
+            data = self.rfile.read(size)
+            target = uploads.save(unquote(self.headers.get('X-Filename', '')), data)
+            self.respond(200, {'path': str(target), 'name': target.name, 'size': len(data)})
+        except (ValueError, UnicodeError) as exc:
+            self.respond(400, {'error': str(exc)})
+        except (OSError, RuntimeError) as exc:
+            self.respond(503, {'error': str(exc) if isinstance(exc, RuntimeError) else 'Could not save that file.'})
 
     def do_DELETE(self):
         if self.path not in ('/mobile/api/tmux-sessions', '/mobile/api/session'):

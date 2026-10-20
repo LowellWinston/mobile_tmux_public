@@ -42,6 +42,7 @@ First run: each agent asks to trust the folder, and the page shows that prompt a
   Input goes into the pane through tmux, exactly as if you had typed it.
 - **Approvals and questions as buttons.** Folder-trust prompts, permission requests and multiple-choice questions show up with their real options.
 - **Usage at a glance.** Rings for the 5-hour allowance, weekly allowance and context use, from each agent's official reports.
+- **Photos and files.** Tap the microphone button, then "Photo or file", to attach a screenshot, a photo or any file (up to 20 MB). It is saved on your machine and its path goes into your message, so Claude, Codex and Antigravity can all open it. Photos are shrunk and their location data removed before they leave the phone.
 - **Model and effort pickers**, `/slash` commands, `!shell` commands in the session's folder, dictation, and push notifications when an agent needs you.
 - **Several sessions as tabs**, with the working folder, an Idle/Working/Approval state, and a start button for each agent.
 - **No dependencies, no build step.** A single Python standard-library server and one web page.
@@ -94,6 +95,7 @@ To rotate the token, delete `~/.config/mobile-tmux/token` and restart the servic
 
 Be clear about what this tool is: a remote control for programs that can edit files and run commands as your user. Treat the access token like an SSH key.
 The `!command` feature runs shell commands as the user the server runs as. Report security problems privately (see [SECURITY.md](SECURITY.md)).
+Attachments are written to `~/.cache/mobile-tmux/uploads/` (owner-only, random name prefix) and deleted after a week. They are never served back over HTTP. The agent may ask your permission to read that folder, because it is outside your project; allow it for the session and later attachments need no further prompt.
 
 ## Usage rings (the `--hooks` step)
 
@@ -144,7 +146,7 @@ status-line problems the text of the pane (`tmux capture-pane -p -t <pane>`) wit
 ## Development
 
 ```bash
-python3 -m unittest test_session_controls test_agent_notices test_auth    # or: pytest
+python3 -m unittest test_session_controls test_agent_notices test_auth test_uploads    # or: pytest
 ```
 
 The tests use fixtures and mocks and need no running tmux or agents. See [CONTRIBUTING.md](CONTRIBUTING.md). Licensed under the [MIT License](LICENSE).

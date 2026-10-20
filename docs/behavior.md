@@ -14,6 +14,8 @@ mode: enter commands directly, without a ! prefix. Shell cd commands persist in 
 Full-screen interactive programs still require an interactive terminal. User messages render in light blue as plain `> message` prompts without bubble borders or padding. The composer expands while typing; desktop Enter sends,
 Shift+Enter inserts a newline, and mobile Enter inserts a newline.
 
+The microphone button opens a two-item menu: Dictate (tapping again while listening stops it) and Photo or file. Photo or file uploads to `/mobile/api/upload` (raw body, 20 MB limit, bound to the selected session and conversation, agent tabs only) and shows the file as a removable chip above the composer. On Send the saved paths are put in front of the typed text as plain paths, and the chips clear. A chip belongs to the tab it was picked in. JPEG, HEIC and oversized images are redrawn first (longest side 2400 px), which drops camera metadata; PNG screenshots, GIFs and other files go up unchanged. Pasting an image into the box attaches it too. Files live in `~/.cache/mobile-tmux/uploads/` and are deleted after seven days.
+
 The bridge discovers panes every five seconds. Codex maps to the newest non-archived
 CLI/IDE thread in the pane's directory, excluding subagents. Multiple Codex panes with
 the same directory are ambiguous and cannot send. Claude maps to its live registry's

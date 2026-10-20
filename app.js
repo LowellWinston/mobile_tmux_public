@@ -351,7 +351,7 @@ function select(entry) {
   updateApproval(null);
   document.querySelector('#launch-agent').hidden = entry.agent !== 'shell';
   try { localStorage.setItem('chat-session', selected); input.value = localStorage.getItem(storageKey()) || ''; } catch { input.value = ''; }
-  resizeInput(); input.disabled = !writable; send.disabled = !writable;
+  resizeInput(); input.disabled = !writable; send.disabled = !writable; renderAttachments();
   input.placeholder = writable ? 'Message ' + (agentNames[agent] || agent) + '…' : agent === 'shell' ? 'Start an agent above to send a msg' : 'Messaging unavailable for this session';
   for (const button of chatTabs()) button.setAttribute('aria-selected', String(button.dataset.session === selected));
   updateSwitcher();
@@ -620,21 +620,20 @@ function openScreen() {
 }
 document.querySelector('#open-screen').addEventListener('click', openScreen);
 
+// The microphone button opens a small menu: dictate, or attach a photo or file.
 // Dictation: the browser's speech recognition turns speech into text in the message box; nothing is sent until Send.
+const voiceButton = document.querySelector('#voice');
+const attachMenu = document.querySelector('#attach-menu');
+const attachFile = document.querySelector('#attach-file');
+let toggleDictation = () => showNotice('This browser cannot dictate here. Tap the microphone on your keyboard instead.');
 (() => {
   const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-  const button = document.querySelector('#voice');
-  button.hidden = false;
-  if (!Recognition) {
-    button.addEventListener('click', () => showNotice('This browser cannot dictate here. Tap the microphone on your keyboard instead.'));
-    return;
-  }
+  voiceButton.hidden = false;
+  if (!Recognition) return;
   let recognition = null;
   let base = '';
-  function stop() { if (recognition) recognition.stop(); }
-  button.addEventListener('pointerdown', (event) => event.preventDefault());
-  button.addEventListener('click', () => {
-    if (recognition) { stop(); return; }
+  toggleDictation = () => {
+    if (recognition) { recognition.stop(); return; }
     recognition = new Recognition();
     recognition.lang = navigator.language || 'en-US';
     recognition.interimResults = true;
@@ -649,11 +648,98 @@ document.querySelector('#open-screen').addEventListener('click', openScreen);
     recognition.onerror = (event) => {
       if (event.error === 'not-allowed' || event.error === 'service-not-allowed') showNotice('Allow microphone access for this page to dictate.');
     };
-    recognition.onend = () => { recognition = null; button.classList.remove('listening'); input.focus(); };
-    button.classList.add('listening');
-    try { recognition.start(); } catch (error) { recognition = null; button.classList.remove('listening'); }
-  });
+    recognition.onend = () => { recognition = null; voiceButton.classList.remove('listening'); input.focus(); };
+    voiceButton.classList.add('listening');
+    try { recognition.start(); } catch (error) { recognition = null; voiceButton.classList.remove('listening'); }
+  };
 })();
+
+// Attachments: a photo or file is uploaded to the server and its path goes into the message, so any agent can read it.
+const attachable = () => !!selected && writable && agent !== 'shell' && !input.disabled;
+function closeAttachMenu() { attachMenu.hidden = true; voiceButton.setAttribute('aria-expanded', 'false'); }
+voiceButton.addEventListener('pointerdown', (event) => event.preventDefault());
+voiceButton.addEventListener('click', () => {
+  if (voiceButton.classList.contains('listening')) { toggleDictation(); return; }   // a tap while listening just stops
+  if (!attachMenu.hidden) { closeAttachMenu(); return; }
+  document.querySelector('#menu-attach').disabled = !attachable();
+  attachMenu.hidden = false; voiceButton.setAttribute('aria-expanded', 'true');
+});
+document.querySelector('#menu-dictate').addEventListener('click', () => { closeAttachMenu(); toggleDictation(); });
+document.querySelector('#menu-attach').addEventListener('click', () => { closeAttachMenu(); attachFile.click(); });
+document.addEventListener('click', (event) => { if (!attachMenu.hidden && !attachMenu.contains(event.target) && event.target !== voiceButton) closeAttachMenu(); });
+document.addEventListener('keydown', (event) => { if (event.key === 'Escape' && !attachMenu.hidden) { closeAttachMenu(); voiceButton.focus(); } });
+
+const attachments = new Map();   // 'session:thread' -> [{name, path}], kept until the message is sent
+const chipBar = document.querySelector('#attachments');
+const attachmentKey = () => selected + ':' + thread;
+function renderAttachments() {
+  const files = attachments.get(attachmentKey()) || [];
+  chipBar.hidden = !files.length;
+  chipBar.replaceChildren(...files.map((file, index) => {
+    const chip = document.createElement('span'); chip.className = 'chip';
+    const label = document.createElement('span'); label.textContent = '📎 ' + file.name;
+    const remove = document.createElement('button'); remove.type = 'button'; remove.textContent = '✕'; remove.setAttribute('aria-label', 'Remove ' + file.name);
+    remove.addEventListener('click', () => { files.splice(index, 1); renderAttachments(); input.focus(); });
+    chip.append(label, remove); return chip;
+  }));
+}
+const MAX_SIDE = 2400, MAX_PLAIN_BYTES = 4 * 1024 * 1024;
+// Phone photos carry location data and are huge: re-draw JPEG/HEIC photos (dropping that metadata) and shrink anything oversized.
+async function prepareFile(file) {
+  const kind = file.type;
+  if (!kind.startsWith('image/') || kind === 'image/gif' || kind === 'image/svg+xml') return {blob: file, name: file.name || 'file'};
+  const isPng = kind === 'image/png';
+  try {
+    const bitmap = await createImageBitmap(file, {imageOrientation: 'from-image'});
+    const scale = Math.min(1, MAX_SIDE / Math.max(bitmap.width, bitmap.height));
+    if (isPng && scale === 1 && file.size <= MAX_PLAIN_BYTES) { bitmap.close(); return {blob: file, name: file.name || 'screenshot.png'}; }
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.round(bitmap.width * scale); canvas.height = Math.round(bitmap.height * scale);
+    canvas.getContext('2d').drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    bitmap.close();
+    const type = isPng ? 'image/png' : 'image/jpeg';
+    const blob = await new Promise(resolve => canvas.toBlob(resolve, type, 0.9));
+    if (!blob) throw new Error('encode failed');
+    const base = (file.name || 'photo').replace(/\.[^.]*$/, '') || 'photo';
+    return {blob, name: base + (isPng ? '.png' : '.jpg')};
+  } catch { return {blob: file, name: file.name || 'file'}; }   // an image the browser cannot decode goes up unchanged
+}
+async function uploadFile(file) {
+  const {blob, name} = await prepareFile(file);
+  const response = await fetch('/mobile/api/upload', {method: 'POST', body: blob, headers: {
+    'X-Codex-Mobile': '1', 'X-Session': selected, 'X-Thread': thread, 'X-Filename': encodeURIComponent(name),
+    'Content-Type': blob.type || 'application/octet-stream'}});
+  if (!response.headers.get('content-type')?.includes('application/json')) throw new Error('Sign in again before attaching.');
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || 'Could not attach that file.');
+  return data;
+}
+async function attachFiles(files) {
+  files = [...files];
+  if (!files.length) return;
+  if (!attachable()) { showNotice('Attachments need a running agent in this tab.'); return; }
+  const session = selected, conversation = thread;
+  const key = session + ':' + conversation;
+  const added = [];
+  try {
+    for (const [index, file] of files.entries()) {
+      showNotice('Uploading ' + (files.length > 1 ? (index + 1) + '/' + files.length + ' ' : '') + (file.name || 'file') + '…');
+      const saved = await uploadFile(file);
+      added.push({name: file.name || saved.name.replace(/^[0-9a-f]{8}-/, ''), path: saved.path});
+    }
+  } catch (error) { showNotice(error.message); }
+  if (!added.length) return;
+  attachments.set(key, [...(attachments.get(key) || []), ...added]);   // belongs to the tab it was picked in, even if you switched meanwhile
+  if (session === selected && conversation === thread) {
+    renderAttachments(); input.focus();
+    showNotice((added.length === 1 ? 'Attached. ' : added.length + ' files attached. ') + 'Add your instruction and send.', true);
+  }
+}
+attachFile.addEventListener('change', () => { const files = [...attachFile.files]; attachFile.value = ''; attachFiles(files); });   // copy first: clearing the input empties its live list
+input.addEventListener('paste', (event) => {   // a screenshot pasted from the clipboard (desktop browsers)
+  const files = [...(event.clipboardData?.files || [])];
+  if (files.length) { event.preventDefault(); attachFiles(files); }
+});
 document.querySelector('#close-screen').addEventListener('click', () => screenDialog.close());
 document.querySelector('#screen-interact').addEventListener('click', () => {
   const tmuxSession = chatTabs().find(tab => tab.dataset.session === selected)?.dataset.tmuxSession;
@@ -771,12 +857,13 @@ document.querySelector('#compose').addEventListener('submit', async event => {
   event.preventDefault();
   const typed = input.value.trim();
   const alias = savedShortcuts.find(item => item.name.toLowerCase() === typed.toLowerCase());  // a lone shortcut name sends its full text
-  const message = alias ? alias.text : typed;
+  const files = agent === 'shell' ? [] : attachments.get(attachmentKey()) || [];
+  const message = [...files.map(file => file.path), alias ? alias.text : typed].filter(Boolean).join(' ');   // attached files go first, as plain paths
   if (!message || sending) return;
-  if (agent !== 'shell' && message.startsWith('!')) { runShell(message.slice(1).trim()); return; }  // run here, in the tab's folder, for every agent
+  if (!files.length && agent !== 'shell' && message.startsWith('!')) { runShell(message.slice(1).trim()); return; }  // run here, in the tab's folder, for every agent
   if (!writable || pendingApproval) return;
   const session = selected, conversation = thread, after = newestId();
-  if (agent !== 'shell' && message === '/model') {  // pick from a list instead of typing into the agent's own picker
+  if (!files.length && agent !== 'shell' && message === '/model') {  // pick from a list instead of typing into the agent's own picker
     input.value = ''; saveDraft(); resizeInput(); openModelSheet(); return;
   }
   sending = true; send.disabled = true; input.disabled = true;
@@ -793,6 +880,7 @@ document.querySelector('#compose').addEventListener('submit', async event => {
     if (agent !== 'shell') pending.push({text: message, time: Date.now(), after, delivery: ['claude', 'antigravity'].includes(agent) ? data.delivery : 'submitted'});
     pendingMessages.set(key, pending);
     input.value = ''; saveDraft(); resizeInput();
+    attachments.delete(session + ':' + conversation); renderAttachments();
     showNotice(['claude', 'antigravity'].includes(agent) && data.delivery === 'queued' ? 'Queued in ' + (agentNames[agent] || agent) + '; delivered when its current work allows' : 'Submitted to terminal; waiting for agent history', true);
     await refresh(); bottom();
   } catch (error) { showNotice(error.message); clearDraftButton.hidden = !error.draft; }
