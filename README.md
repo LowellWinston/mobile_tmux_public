@@ -1,5 +1,8 @@
 # Mobile Tmux
 
+[![tests](https://github.com/LowellWinston/mobile_tmux_public/actions/workflows/test.yml/badge.svg)](https://github.com/LowellWinston/mobile_tmux_public/actions/workflows/test.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 A chat-style phone interface for coding agents running in tmux. Run [Claude Code](https://claude.com/claude-code),
 [Codex CLI](https://github.com/openai/codex) or Antigravity (`agy`) in a tmux session on your own machine, and
 read and answer them from your phone as a chat, with approvals, usage meters, and model pickers.
