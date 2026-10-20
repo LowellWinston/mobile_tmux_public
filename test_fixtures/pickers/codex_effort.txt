@@ -1,0 +1,21 @@
+  alone, such as an image or
+  audio file, won’t move the
+  story in the list unless
+  config.json is also
+  rewritten.
+
+  Worked for 17s • 05:00
+
+
+  Select Reasoning Level for
+  GPT-6-Sol
+
+
+  1. Low
+› 2. Medium (default) (current)
+  3. High
+  4. Extra high
+  5. More reasoning…
+
+  enter default · s session ·
+  esc back

@@ -1,0 +1,30 @@
+
+  • Specify the target repository or file path in /home/user to inspect or 
+  modify.
+  • Use /plan if you are starting a multi-step feature or architectural      
+  refactor, or /grill-me to align on requirements first.
+
+> /model
+  ⎿  Model set to Gemini 4 Argon (Medium)
+
+────────────────────────────────────────────────────────────────────────────────
+>
+────────────────────────────────────────────────────────────────────────────────
+Switch Model
+
+  Search:  
+          ────────────────────
+
+> Gemini 4 Argon        (current)
+  Gemini 3.8 Flash
+  Claude Opus 5.5
+  Claude Sonnet 5.5
+  GPT-OSS 120B (Medium)
+
+  Effort  ◂        ●━━━━━━━━━━━━━━◉──────────────○        ▸
+                  low          medium          high      
+            Balanced speed and reasoning quality for most tasks
+
+Keyboard: ↑/↓ Navigate  ←/→ Effort  enter Select  esc Go Back
+
+                                                  auto · Gemini 4 Argon · medium
