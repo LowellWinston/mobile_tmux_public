@@ -620,15 +620,14 @@ function openScreen() {
 }
 document.querySelector('#open-screen').addEventListener('click', openScreen);
 
-// The microphone button opens a small menu: dictate, or attach a photo or file.
+// The + button opens a small menu: attach a photo or file, dictate, or open the terminal.
 // Dictation: the browser's speech recognition turns speech into text in the message box; nothing is sent until Send.
-const voiceButton = document.querySelector('#voice');
+const toolsButton = document.querySelector('#tools');
 const attachMenu = document.querySelector('#attach-menu');
 const attachFile = document.querySelector('#attach-file');
 let toggleDictation = () => showNotice('This browser cannot dictate here. Tap the microphone on your keyboard instead.');
 (() => {
   const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-  voiceButton.hidden = false;
   if (!Recognition) return;
   let recognition = null;
   let base = '';
@@ -648,26 +647,28 @@ let toggleDictation = () => showNotice('This browser cannot dictate here. Tap th
     recognition.onerror = (event) => {
       if (event.error === 'not-allowed' || event.error === 'service-not-allowed') showNotice('Allow microphone access for this page to dictate.');
     };
-    recognition.onend = () => { recognition = null; voiceButton.classList.remove('listening'); input.focus(); };
-    voiceButton.classList.add('listening');
-    try { recognition.start(); } catch (error) { recognition = null; voiceButton.classList.remove('listening'); }
+    const setListening = (on) => { toolsButton.classList.toggle('listening', on); toolsButton.textContent = on ? '🎤' : '+'; };   // the + shows a mic while listening; tap it to stop
+    recognition.onend = () => { recognition = null; setListening(false); input.focus(); };
+    setListening(true);
+    try { recognition.start(); } catch (error) { recognition = null; setListening(false); }
   };
 })();
 
 // Attachments: a photo or file is uploaded to the server and its path goes into the message, so any agent can read it.
 const attachable = () => !!selected && writable && agent !== 'shell' && !input.disabled;
-function closeAttachMenu() { attachMenu.hidden = true; voiceButton.setAttribute('aria-expanded', 'false'); }
-voiceButton.addEventListener('pointerdown', (event) => event.preventDefault());
-voiceButton.addEventListener('click', () => {
-  if (voiceButton.classList.contains('listening')) { toggleDictation(); return; }   // a tap while listening just stops
+function closeAttachMenu() { attachMenu.hidden = true; toolsButton.setAttribute('aria-expanded', 'false'); }
+toolsButton.addEventListener('pointerdown', (event) => event.preventDefault());
+toolsButton.addEventListener('click', () => {
+  if (toolsButton.classList.contains('listening')) { toggleDictation(); return; }   // a tap while listening just stops
   if (!attachMenu.hidden) { closeAttachMenu(); return; }
   document.querySelector('#menu-attach').disabled = !attachable();
-  attachMenu.hidden = false; voiceButton.setAttribute('aria-expanded', 'true');
+  attachMenu.hidden = false; toolsButton.setAttribute('aria-expanded', 'true');
 });
-document.querySelector('#menu-dictate').addEventListener('click', () => { closeAttachMenu(); toggleDictation(); });
-document.querySelector('#menu-attach').addEventListener('click', () => { closeAttachMenu(); attachFile.click(); });
-document.addEventListener('click', (event) => { if (!attachMenu.hidden && !attachMenu.contains(event.target) && event.target !== voiceButton) closeAttachMenu(); });
-document.addEventListener('keydown', (event) => { if (event.key === 'Escape' && !attachMenu.hidden) { closeAttachMenu(); voiceButton.focus(); } });
+attachMenu.addEventListener('click', closeAttachMenu);   // any item closes the menu (each item's own handler still runs)
+document.querySelector('#menu-dictate').addEventListener('click', toggleDictation);
+document.querySelector('#menu-attach').addEventListener('click', () => attachFile.click());
+document.addEventListener('click', (event) => { if (!attachMenu.hidden && !attachMenu.contains(event.target) && event.target !== toolsButton) closeAttachMenu(); });
+document.addEventListener('keydown', (event) => { if (event.key === 'Escape' && !attachMenu.hidden) { closeAttachMenu(); toolsButton.focus(); } });
 
 const attachments = new Map();   // 'session:thread' -> [{name, path}], kept until the message is sent
 const chipBar = document.querySelector('#attachments');
