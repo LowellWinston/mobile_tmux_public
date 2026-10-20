@@ -7,7 +7,7 @@ A chat-style phone interface for coding agents running in tmux. Run [Claude Code
 [Codex CLI](https://github.com/openai/codex) or Antigravity (`agy`) in a tmux session on your own machine, and
 read and answer them from your phone as a chat, with approvals, usage meters, and model pickers.
 
-This is a phone front end for the tmux sessions that run your agents and shells. It is not a general tmux client: it has no windows, splits or layouts, and does not plan to.
+This is a phone front end for the tmux sessions that run your agents and shells: type `!command` to run a shell command in a session's folder, or open a plain shell tab with no agent. It is not a general tmux client: it has no windows, splits or layouts, and does not plan to.
 
 - **Reads the agent's own history, not the screen.** The chat is rebuilt from each agent's transcript files, so it is clean text, not a terminal scrape.
   Input goes into the pane through tmux, exactly as if you had typed it.
