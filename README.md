@@ -3,19 +3,16 @@
 [![tests](https://github.com/LowellWinston/mobile_tmux_public/actions/workflows/test.yml/badge.svg)](https://github.com/LowellWinston/mobile_tmux_public/actions/workflows/test.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-A chat-style phone interface for coding agents running in tmux. Run [Claude Code](https://claude.com/claude-code),
-[Codex CLI](https://github.com/openai/codex) or Antigravity (`agy`) in a tmux session on your own machine, and
-read and answer them from your phone as a chat, with approvals, usage meters, and model pickers.
+**Keep working with your coding agent when you're away from your desk.**
+
+Start [Claude Code](https://claude.com/claude-code), [Codex CLI](https://github.com/openai/codex) or Antigravity (`agy`) on your own machine, then carry on from your phone. Read what the agent has done, approve its requests, answer its questions and send the next instruction, from the sofa, the train or a long queue. The agent keeps running in tmux on your computer, so nothing stops when you walk away.
+
+- **Approve without going back.** A long run stops to ask permission. You get the real request as buttons and tap one.
+- **Chat, not a terminal.** The conversation reads like a chat, with tool actions collapsed, instead of a phone-sized terminal.
+- **All your agents in one place.** Switch between sessions as tabs, see which one is waiting for you, and get a push notification when one needs you.
+- **Your machine, your data.** It runs on your computer. Nothing goes through anyone else's server, and there is no account.
 
 This is a phone front end for the tmux sessions that run your agents and shells: type `!command` to run a shell command in a session's folder, or open a plain shell tab with no agent. It is not a general tmux client: it has no windows, splits or layouts, and does not plan to.
-
-- **Reads the agent's own history, not the screen.** The chat is rebuilt from each agent's transcript files, so it is clean text, not a terminal scrape. The one exception is a pending approval or question: it is not in the history yet, so the prompt is read from the pane.
-  Input goes into the pane through tmux, exactly as if you had typed it.
-- **Approvals and questions as buttons.** Folder-trust prompts, permission requests and multiple-choice questions show up with their real options.
-- **Usage at a glance.** Rings for the 5-hour allowance, weekly allowance and context use, from each agent's official reports.
-- **Model and effort pickers**, `/slash` commands, `!shell` commands in the session's folder, dictation, and push notifications when an agent needs you.
-- **Several sessions as tabs**, with the working folder, an Idle/Working/Approval state, and a start button for each agent.
-- **No dependencies, no build step.** A single Python standard-library server and one web page.
 
 ## Screenshots
 
@@ -38,6 +35,16 @@ This is a phone front end for the tmux sessions that run your agents and shells:
 </table>
 
 First run: each agent asks to trust the folder, and the page shows that prompt as buttons too ([screenshot](docs/screenshots/10-first-run.png)).
+
+## Features
+
+- **Reads the agent's own history, not the screen.** The chat is rebuilt from each agent's transcript files, so it is clean text, not a terminal scrape. The one exception is a pending approval or question: it is not in the history yet, so the prompt is read from the pane.
+  Input goes into the pane through tmux, exactly as if you had typed it.
+- **Approvals and questions as buttons.** Folder-trust prompts, permission requests and multiple-choice questions show up with their real options.
+- **Usage at a glance.** Rings for the 5-hour allowance, weekly allowance and context use, from each agent's official reports.
+- **Model and effort pickers**, `/slash` commands, `!shell` commands in the session's folder, dictation, and push notifications when an agent needs you.
+- **Several sessions as tabs**, with the working folder, an Idle/Working/Approval state, and a start button for each agent.
+- **No dependencies, no build step.** A single Python standard-library server and one web page.
 
 ## Requirements
 
