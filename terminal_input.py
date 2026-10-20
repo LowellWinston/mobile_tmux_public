@@ -61,7 +61,7 @@ def approval(screen):
         if match:
             choices.append((i, bool(match[1]), match[3]))
             choice_numbers.append(int(match[2]))
-        elif trust and (match := re.match(r'^\s*([>❯›]?)\s*((?:Yes|No|Trust|Don.t trust|Do not trust|Exit)\b.*)', line, re.I)):
+        elif trust and (match := re.match(r'^\s*([>❯›]?)\s*((?:Yes|No|Trust|Don.t trust|Do not trust|Exit)\b[^?]*)$', line)):  # capitalised, and not a wrapped question line
             choices.append((i, bool(match[1]), match[2]))
             choice_numbers.append(len(choices))
     reject = r'(?:No\b|Reject\b|Cancel\b|Exit\b|Don.t trust\b|Do not trust\b)'
@@ -85,7 +85,7 @@ def approval(screen):
         options.append({'id': number, 'text': ' '.join([label, *continuation])})
     canonical = re.sub(r'(?m)^\s*[>❯›]?\s*(\d+)\.\s+', r'\1. ', full_text)
     if trust:
-        canonical = re.sub(r'(?m)^[ \t]*[>❯›]?[ \t]*((?:Yes|No|Trust|Don.t trust|Do not trust|Exit)\b.*)$', r'\1', full_text)
+        canonical = re.sub(r'(?m)^[ \t]*[>❯›]?[ \t]*((?:Yes|No|Trust|Don.t trust|Do not trust|Exit)\b[^?\n]*)$', r'\1', full_text)
     return {'id': hashlib.sha256(canonical.encode()).hexdigest(), 'text': text,
             'actionable': selected is not None, 'options': options,
             '_numbers': numbers,

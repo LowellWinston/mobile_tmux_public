@@ -25,6 +25,13 @@ class SessionControlTests(unittest.TestCase):
         failed = server.display_text(envelope('false', 'Exit code: 1\nOutput:\n'))
         self.assertIn('Exit code: 1', failed)
 
+    def test_a_wrapped_trust_question_is_not_taken_for_a_choice(self):
+        screen = ('Accessing workspace:\n\n /home/user/app\n\n Quick safety check: Is this a\n project you created or one you\n'
+                  ' trust? (Like your own code, a\n well-known open source project, or\n work from your team).\n\n'
+                  ' ❯ No, exit\n   Yes, I trust this folder\n\n Enter to confirm · Esc to cancel')
+        request = terminal.approval(screen)
+        self.assertEqual([option['text'] for option in request['options']], ['No, exit', 'Yes, I trust this folder'])
+
     def test_unnumbered_folder_trust_choices_are_explicit_and_bound(self):
         cursor = [0]
         keys = []
