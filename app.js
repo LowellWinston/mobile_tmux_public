@@ -737,9 +737,19 @@ async function attachFiles(files) {
   }
 }
 attachFile.addEventListener('change', () => { const files = [...attachFile.files]; attachFile.value = ''; attachFiles(files); });   // copy first: clearing the input empties its live list
-input.addEventListener('paste', (event) => {   // a screenshot pasted from the clipboard (desktop browsers)
+// A screenshot pasted from the clipboard, or files dropped on the page (desktop browsers). Pasting works anywhere on the
+// page except inside some other text field (such as the shortcut editor), where it must stay a normal paste.
+document.addEventListener('paste', (event) => {
   const files = [...(event.clipboardData?.files || [])];
-  if (files.length) { event.preventDefault(); attachFiles(files); }
+  const other = event.target.closest?.('input, textarea, [contenteditable]');
+  if (!files.length || (other && other !== input)) return;
+  event.preventDefault(); attachFiles(files);
+});
+addEventListener('dragover', (event) => { if (event.dataTransfer?.types?.includes('Files')) event.preventDefault(); });
+addEventListener('drop', (event) => {
+  const files = [...(event.dataTransfer?.files || [])];
+  if (!files.length) return;
+  event.preventDefault(); attachFiles(files);
 });
 document.querySelector('#close-screen').addEventListener('click', () => screenDialog.close());
 document.querySelector('#screen-interact').addEventListener('click', () => {

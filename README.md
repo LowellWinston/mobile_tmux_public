@@ -42,7 +42,7 @@ First run: each agent asks to trust the folder, and the page shows that prompt a
   Input goes into the pane through tmux, exactly as if you had typed it.
 - **Approvals and questions as buttons.** Folder-trust prompts, permission requests and multiple-choice questions show up with their real options.
 - **Usage at a glance.** Rings for the 5-hour allowance, weekly allowance and context use, from each agent's official reports.
-- **Photos and files.** Tap the + button next to the message box, then "Photo or file", to attach a screenshot, a photo or any file (up to 20 MB). It is saved on your machine and its path goes into your message, so Claude, Codex and Antigravity can all open it. Photos are shrunk and their location data removed before they leave the phone.
+- **Photos and files.** Tap the + button next to the message box, then "Photo or file", to attach a screenshot, a photo or any file (up to 20 MB). It is saved on your machine and its path goes into your message, so Claude, Codex and Antigravity can all open it. On a computer you can also paste a screenshot (Ctrl/Cmd+V) or drop files onto the page. Photos are shrunk and their location data removed before they leave the phone.
 - **Model and effort pickers**, `/slash` commands, `!shell` commands in the session's folder, dictation, and push notifications when an agent needs you.
 - **Several sessions as tabs**, with the working folder, an Idle/Working/Approval state, and a start button for each agent.
 - **No dependencies, no build step.** A single Python standard-library server and one web page.
