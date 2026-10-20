@@ -84,7 +84,7 @@ footer{padding:8px 12px max(8px,env(safe-area-inset-bottom))}form{gap:8px}textar
 @media(max-width:600px){#session-bar{padding:4px 6px;gap:6px}#tabs{gap:4px}#tabs button{min-height:36px;padding:4px 7px;font-size:.75rem;gap:4px;border-radius:7px}#tabs .tab-label{max-width:76px}.agent-icon{width:15px;height:15px}.usage-ring{width:32px;min-height:36px;padding:2px}#usage{flex:0 0 98px;width:98px}.tab-state{font-size:8px;margin-top:2px}}
 </style>
 <style>
-#message:disabled::placeholder{font-size:.72rem}
+#message::placeholder{font-size:.8rem}#message:disabled::placeholder{font-size:.72rem}
 </style>
 <style>
 .message.user{color:#a4caff;font-weight:500}.user>.label,.user.pending-message>.label{color:#80b6ff}
@@ -168,5 +168,5 @@ footer{transform:translateY(calc(var(--keyboard,0px) * -1))}
 <footer><div id="shortcut-chips" hidden></div><div id="suggestion" hidden><button type="button"></button></div><form id="compose"><textarea id="message" rows="1" aria-label="Message Codex" placeholder="Message Codex…"></textarea><button id="voice" type="button" aria-label="Dictate a message" title="Dictate" hidden>🎤</button><button id="open-screen" type="button" aria-label="Terminal: live screen, with an Interact option" title="Terminal">▤</button><button id="send" type="submit">Send</button></form><div id="notice" role="status"></div><button id="clear-draft" type="button" hidden>Clear agent draft</button></footer>
 <script src="/mobile/vendor/marked.js"></script>
 <script src="/mobile/vendor/dompurify.js"></script>
-<script src="/mobile/app.js?v=20261019-clean"></script>
+<script src="/mobile/app.js?v=20261019-placeholder"></script>
 </body></html>
