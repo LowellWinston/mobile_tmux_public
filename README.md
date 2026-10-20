@@ -12,6 +12,28 @@ read and answer them from your phone as a chat, with approvals, usage meters, an
 - **Several sessions as tabs**, with the working folder, an Idle/Working/Approval state, and a start button for each agent.
 - **No dependencies, no build step.** A single Python standard-library server and one web page.
 
+## Screenshots
+
+<table>
+  <tr>
+    <td align="center"><img src="docs/screenshots/01-sessions.png" width="240" alt="Session switcher with Codex working, Claude waiting for approval and Antigravity idle"><br><sub>Every agent at a glance, with an alert when one needs you</sub></td>
+    <td align="center"><img src="docs/screenshots/02-approval.png" width="240" alt="A Claude Code file-creation request shown as buttons"><br><sub>Approvals show the real request and options</sub></td>
+    <td align="center"><img src="docs/screenshots/03-question.png" width="240" alt="A multiple-choice question from Claude Code shown as a card"><br><sub>Multiple-choice questions become a card</sub></td>
+  </tr>
+  <tr>
+    <td align="center"><img src="docs/screenshots/04-claude.png" width="240" alt="Claude Code chat with a collapsed list of actions"><br><sub>Claude Code</sub></td>
+    <td align="center"><img src="docs/screenshots/05-codex.png" width="240" alt="Codex CLI chat"><br><sub>Codex CLI</sub></td>
+    <td align="center"><img src="docs/screenshots/06-antigravity.png" width="240" alt="Antigravity chat"><br><sub>Antigravity</sub></td>
+  </tr>
+  <tr>
+    <td align="center"><img src="docs/screenshots/07-usage.png" width="240" alt="Usage popup with 5-hour, weekly and context meters"><br><sub>5-hour, weekly and context usage</sub></td>
+    <td align="center"><img src="docs/screenshots/08-model-picker.png" width="240" alt="Model and effort picker"><br><sub>Model and effort picker</sub></td>
+    <td align="center"><img src="docs/screenshots/09-shell.png" width="240" alt="Shell commands run from the phone"><br><sub>Shell commands, with the folder following your <code>cd</code></sub></td>
+  </tr>
+</table>
+
+First run: each agent asks to trust the folder, and the page shows that prompt as buttons too ([screenshot](docs/screenshots/10-first-run.png)).
+
 ## Requirements
 
 - Linux (it relies on `/proc` and the agents' file layouts on Linux). macOS is not supported yet.
