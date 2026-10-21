@@ -950,6 +950,9 @@ class CodexThreadTests(unittest.TestCase):
         uuid = '01a13a1a-9be4-7033-b28e-828425bc75e0'
         child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(5)', 'resume', uuid])
         try:
+            deadline = time.monotonic() + 5  # Popen can return before the new program's arguments are visible in /proc
+            while uuid.encode() not in Path('/proc/%d/cmdline' % child.pid).read_bytes() and time.monotonic() < deadline:
+                time.sleep(.01)
             db = self.database([(uuid, '/r/resumed', '/elsewhere', 0, 'cli', 1, 2)])
             self.assertEqual(agents.codex_thread(db, child.pid, self.started(), '/work'), (uuid, '/r/resumed'))
         finally:
