@@ -178,7 +178,7 @@ def settle(sleep=time.sleep):
 def snapshot(entry, run, sleep):
     """Wait for the redraw, then read the picker: scrollback for the whole list, the live screen for what is selected."""
     settle(sleep)
-    return parse(entry, capture(entry, run), visible(entry, run))
+    return parse(entry, capture(entry, run), visible(entry, run) if entry['agent'] == 'claude' else None)  # only Claude's parser reads the live screen
 
 
 def selected_index(rows):

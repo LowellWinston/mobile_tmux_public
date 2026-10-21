@@ -397,7 +397,7 @@ async function refreshTabs() {
       updateSwitcher();
     }
     if (!data.sessions.length) {
-      selected = null; thread = null;
+      selected = null; thread = null; generation++;
       status.textContent = 'No tmux sessions yet';
       const help = document.createElement('p'); help.id = 'loading';
       help.textContent = 'Nothing to show yet. Tap + to create a tmux session, or run "tmux new -s work" on your computer, then start Claude Code, Codex or Antigravity in it. This page picks it up within a few seconds.';
@@ -437,6 +437,7 @@ function openStream() {
     if (session !== selected) return;
     lastPush = Date.now(); refresh(data);
   };
+  stream.addEventListener('idle', () => { lastPush = Date.now(); });
 }
 async function refresh(pushed) {
   if (!selected || document.hidden) return;
@@ -475,6 +476,7 @@ async function refresh(pushed) {
     if (!sending) { input.disabled = !writable || !!pendingApproval; send.disabled = !writable || !!pendingApproval; }
     input.placeholder = writable ? 'Message ' + (agentNames[agent] || agent) + '…' : agent === 'shell' ? 'Start an agent above to send a msg' : data.messaging_note ? 'Waiting for Antigravity bridge…' : 'Messaging unavailable for this session';
     if (agent === 'shell' && shellModes.has(selected)) input.placeholder = 'Shell command…';
+    input.setAttribute('aria-label', agent === 'shell' && shellModes.has(selected) ? 'Shell command' : 'Message ' + (agentNames[agent] || agent));
     if (starting) input.placeholder = 'Starting ' + agentNames[starting.agent] + '…';
     let changed = false, next = null;
     // The page mirrors the window the server sent, so a tab left open for days cannot grow without bound.
@@ -524,7 +526,6 @@ async function refresh(pushed) {
       changed = true; next = article;
       rendered.set(message.id, {text: message.text, element: article, role: message.role});
     }
-    if (changed || data.busy || data.state === 'Working') lastActivity = Date.now();
     if (data.earlier > 0) {
       const reachable = data.limit < (data.max_limit || Infinity);   // the server never sends more than max_limit messages
       earlierButton.disabled = !reachable;
@@ -705,10 +706,10 @@ async function prepareFile(file) {
     return {blob, name: base + (isPng ? '.png' : '.jpg')};
   } catch { return {blob: file, name: file.name || 'file'}; }   // an image the browser cannot decode goes up unchanged
 }
-async function uploadFile(file) {
+async function uploadFile(file, session, conversation) {
   const {blob, name} = await prepareFile(file);
   const response = await fetch('/mobile/api/upload', {method: 'POST', body: blob, headers: {
-    'X-Codex-Mobile': '1', 'X-Session': selected, 'X-Thread': thread, 'X-Filename': encodeURIComponent(name),
+    'X-Codex-Mobile': '1', 'X-Session': session, 'X-Thread': conversation, 'X-Filename': encodeURIComponent(name),
     'Content-Type': blob.type || 'application/octet-stream'}});
   if (!response.headers.get('content-type')?.includes('application/json')) throw new Error('Sign in again before attaching.');
   const data = await response.json();
@@ -725,7 +726,7 @@ async function attachFiles(files) {
   try {
     for (const [index, file] of files.entries()) {
       showNotice('Uploading ' + (files.length > 1 ? (index + 1) + '/' + files.length + ' ' : '') + (file.name || 'file') + '…');
-      const saved = await uploadFile(file);
+      const saved = await uploadFile(file, session, conversation);
       added.push({name: file.name || saved.name.replace(/^[0-9a-f]{8}-/, ''), path: saved.path});
     }
   } catch (error) { showNotice(error.message); }
@@ -1002,7 +1003,7 @@ async function closeChatTab(entry) {
       body: JSON.stringify({pane: entry.id})});
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || 'Could not close the tab.');
-    if (selected === entry.id) { selected = null; thread = null; }
+    if (selected === entry.id) { selected = null; thread = null; generation++; }
     await refreshTabs(); showNotice('Closed ' + entry.label, true);
   } catch (error) { showNotice(error.message); }
   finally { for (const control of tabs.querySelectorAll('button')) control.disabled = false; }

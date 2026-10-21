@@ -13,6 +13,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 import paths
+from activity import insert_by_time
 
 CACHE = paths.CACHE / 'shell'
 HOME = str(Path.home())
@@ -79,7 +80,10 @@ def run(pane, command, start, agent_folder=None, owner=None):
             raw, _ = process.communicate(timeout=TIMEOUT)
         except subprocess.TimeoutExpired:
             stopped = True
-            os.killpg(process.pid, signal.SIGKILL)
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:  # it exited between the timeout and the kill
+                pass
             raw, _ = process.communicate()
         text = ANSI.sub('', raw.decode('utf-8', 'replace')).replace('\r\n', '\n')
         arrived = folder
@@ -140,13 +144,4 @@ def merge(pane, messages):
     if not entries:
         return messages
 
-    def stamp(value):
-        try:
-            return datetime.fromisoformat(value.replace('Z', '+00:00')).timestamp()
-        except (AttributeError, TypeError, ValueError):
-            return 0
-    result = list(messages)
-    for entry in entries:
-        later = next((index for index, message in enumerate(result) if stamp(message.get('time')) > stamp(entry['time'])), len(result))
-        result.insert(later, entry)
-    return result
+    return insert_by_time(messages, entries)

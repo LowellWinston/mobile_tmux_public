@@ -100,6 +100,17 @@ class AuthTests(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 auth.check_startup('0.0.0.0')
 
+    def test_non_ascii_cookie_and_token_are_refused_without_crashing(self):
+        self.assertFalse(auth.signed_in(auth.COOKIE + '=caf\u00e9'))
+        self.assertEqual(auth.attempt('client', 'caf\u00e9'), 'wrong')
+        self.assertEqual(len(auth._failures['client']), 1)  # and it counts as a failed attempt
+        page, _ = self.request('GET', '/mobile/', headers={'Cookie': (auth.COOKIE + '=caf\u00e9').encode('latin-1')})
+        self.assertEqual(page.status, 302)
+
+    def test_login_with_a_non_numeric_content_length_is_a_bad_request(self):
+        response, _ = self.request('POST', '/mobile/login', None, {'Origin': 'http://phone.test', 'Content-Length': 'abc'})
+        self.assertEqual(response.status, 400)
+
     def test_live_terminal_is_proxied_only_after_sign_in(self):
         import socket
         upstream = socket.socket()

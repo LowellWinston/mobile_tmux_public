@@ -1,4 +1,5 @@
 """Helpers shared by the Claude, Codex and Antigravity parsers."""
+from datetime import datetime
 import re
 
 ANSI = re.compile(r'\x1b\[[0-9;]*[A-Za-z]')
@@ -17,6 +18,23 @@ def merge(messages):
             continue
         merged.append(message)
     return merged
+
+
+def insert_by_time(messages, items):
+    """Put each item before the first message stamped later; every timestamp is parsed once."""
+    def stamp(value):
+        try:
+            return datetime.fromisoformat(value.replace('Z', '+00:00')).timestamp()
+        except (AttributeError, TypeError, ValueError):
+            return 0
+    result = list(messages)
+    stamps = [stamp(message.get('time')) for message in result]
+    for item in items:
+        when = stamp(item['time'])
+        later = next((index for index, seen in enumerate(stamps) if seen > when), len(result))
+        result.insert(later, item)
+        stamps.insert(later, when)
+    return result
 
 
 MAX_LINE = 160

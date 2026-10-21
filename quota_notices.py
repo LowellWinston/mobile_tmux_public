@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 import threading
 import paths
+from activity import insert_by_time
 
 CACHE = paths.CACHE / 'notices'
 LOCK = threading.Lock()
@@ -94,18 +95,10 @@ def capture(entry, screen):
 def merge(entry, messages):
     """Prefer the transcript's warning when the same text was seen in tmux."""
     seen = {identity(message['text']) for message in messages if message.get('kind') == 'notice'}
-    result = list(messages)
+    fresh = []
     for notice in saved(entry):
         if identity(notice['text']) in seen:
             continue
-        # Captured time orders terminal-only notices among persisted chat messages.
-        def timestamp(value):
-            try:
-                return datetime.fromisoformat(value.replace('Z', '+00:00')).timestamp()
-            except (AttributeError, TypeError, ValueError):
-                return 0
-        later = next((index for index, message in enumerate(result)
-                      if timestamp(message.get('time')) > timestamp(notice['time'])), len(result))
-        result.insert(later, notice)
+        fresh.append(notice)  # captured time orders terminal-only notices among persisted chat messages
         seen.add(identity(notice['text']))
-    return result
+    return insert_by_time(messages, fresh)

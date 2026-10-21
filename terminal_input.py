@@ -1,6 +1,7 @@
 """Guarded input and visible permission prompts for live agent tmux panes."""
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import sqlite3
@@ -164,9 +165,15 @@ def attention(entry, screen, working, now=None):
     return found
 
 
+_busy = {}  # transcript path -> ((size, mtime), result)
+
+
 def transcript_busy(path, window=262144):
     """True when the last lifecycle event in a Codex rollout file is a started turn."""
     try:
+        info = os.stat(path)
+        if path in _busy and _busy[path][0] == (info.st_size, info.st_mtime_ns):
+            return _busy[path][1]
         with open(path, 'rb') as stream:
             stream.seek(0, 2)
             stream.seek(max(0, stream.tell() - window))
@@ -178,6 +185,9 @@ def transcript_busy(path, window=262144):
         for kind in ('task_started', 'task_complete', 'turn_aborted'):
             if '"type":"' + kind + '"' in line.replace(' ', ''):
                 last = kind
+    if len(_busy) > 64:
+        _busy.clear()
+    _busy[path] = ((info.st_size, info.st_mtime_ns), last == 'task_started')
     return last == 'task_started'
 
 

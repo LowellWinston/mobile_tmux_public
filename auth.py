@@ -21,6 +21,7 @@ MAX_AGE = 30 * 86400
 TOKEN_FILE = paths.CONFIG / 'token'
 LIMIT, WINDOW = 5, 300   # failed sign-ins allowed per client per window (seconds)
 _failures = {}
+_token = [None, '']
 _lock = threading.Lock()
 
 
@@ -42,9 +43,12 @@ def check_startup(host):
 def token():
     """The access token; created (owner-only file) the first time it is needed."""
     try:
-        value = TOKEN_FILE.read_text().strip()
-        if value:
-            return value
+        stamp = TOKEN_FILE.stat().st_mtime_ns
+        if _token[0] != stamp:  # re-read only when the file changed
+            value = TOKEN_FILE.read_text().strip()
+            _token[:] = [stamp, value]
+        if _token[1]:
+            return _token[1]
     except OSError:
         pass
     TOKEN_FILE.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -69,7 +73,7 @@ def signed_in(cookie_text):
         return True
     for part in (cookie_text or '').split(';'):
         name, _, value = part.strip().partition('=')
-        if name == COOKIE and hmac.compare_digest(value, session_value()):
+        if name == COOKIE and hmac.compare_digest(value.encode(), session_value().encode()):
             return True
     return False
 
@@ -82,7 +86,7 @@ def attempt(client, candidate):
         if len(recent) >= LIMIT:
             _failures[client] = recent
             return 'blocked'
-        if isinstance(candidate, str) and hmac.compare_digest(candidate.strip(), token()):
+        if isinstance(candidate, str) and hmac.compare_digest(candidate.strip().encode(), token().encode()):
             _failures.pop(client, None)
             return 'ok'
         _failures[client] = recent + [now]

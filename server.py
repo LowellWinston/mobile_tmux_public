@@ -31,7 +31,9 @@ import socket
 import paths
 
 ROOT = Path(__file__).resolve().parent
+KEEPALIVE = 10
 UI_ASSETS = {name: (ROOT / name).read_text() for name in ('index.html', 'app.js')}
+STATIC_ASSETS = {'/mobile/' + p.name: p.read_bytes() for p in [*(ROOT / 'vendor').glob('*.js'), ROOT / 'sw.js', ROOT / 'manifest.webmanifest', *ROOT.glob('*.png')]}
 TERMINAL_ASSETS = {'html': (ROOT / 'termius.html').read_text(), 'js': (ROOT / 'termius.js').read_text()}
 CONFIG = paths.private_file('default_conversation.json')
 TTYD_PORT = int(os.environ.get('MOBILE_TMUX_TTYD_PORT', '7682'))
@@ -62,7 +64,7 @@ def monitor_notices():
         for entry in entries:
             try:
                 if entry.get('owner_pid') and entry.get('writable'):
-                    NOTIFIER.observe(entry, live_status(entry))
+                    NOTIFIER.observe(entry, shared_status(entry))
             except Exception:  # one odd pane must never stop the monitor for everyone
                 continue
         time.sleep(2)
@@ -110,8 +112,34 @@ def settings():
     return {'thread': saved.get('thread'), 'transcript': saved.get('transcript')}
 
 
+STATUS_CACHE = {}  # entry id -> (when, status)
+STATUS_LOCK = threading.Lock()
+
+
+def shared_status(entry):
+    """live_status for the session list and the monitor, which would otherwise each re-read the pane every few seconds."""
+    with STATUS_LOCK:
+        when, status = STATUS_CACHE.get(entry['id'], (0.0, None))
+        if time.monotonic() - when > 1:
+            try:
+                status = live_status(entry)
+            except (OSError, ValueError, KeyError, subprocess.SubprocessError):  # a pane that just closed must not fail the whole tab list
+                status = {'state': 'Unavailable', 'approval': None}
+            STATUS_CACHE[entry['id']] = (time.monotonic(), status)
+        return status
+
+
+SESSIONS_CACHE = [0.0, []]
+SESSIONS_LOCK = threading.Lock()
+
+
 def sessions():
-    return discover(settings(), subprocess.run)
+    """Discovery shells out (ps, tmux, sqlite); every open page and the monitor ask every 2s, so share one result for a second."""
+    with SESSIONS_LOCK:
+        if time.monotonic() - SESSIONS_CACHE[0] > 1:
+            SESSIONS_CACHE[1] = discover(settings(), subprocess.run)
+            SESSIONS_CACHE[0] = time.monotonic()
+        return SESSIONS_CACHE[1]
 
 
 def choose(identifier=None):
@@ -297,6 +325,7 @@ def home_path(path):
 
 
 RATES_FILE = paths.CACHE / 'codex_rates.json'
+LAST_RATES = [None]
 FOOTER_MODEL = re.compile(r'^\s*(\S+)\s+(minimal|low|medium|high|xhigh|extra high)\s+·\s+Context', re.M | re.I)
 FOOTER_CONTEXT = re.compile(r'Context\s+(\d+(?:\.\d+)?)%\s+(left|used)')
 
@@ -341,11 +370,14 @@ def codex_metrics(config, reported_usage, model=''):
     context, windows, reported = reported_usage or ({}, [], None)
     inherited = False
     if windows:
-        try:
-            RATES_FILE.parent.mkdir(parents=True, exist_ok=True)
-            RATES_FILE.write_text(json.dumps({'windows': windows, 'reported_at': reported}))
-        except OSError:
-            pass
+        saved = json.dumps({'windows': windows, 'reported_at': reported})
+        if (str(RATES_FILE), saved) != LAST_RATES[0] or not RATES_FILE.exists():  # rewrite if the file moved or was deleted
+            try:
+                RATES_FILE.parent.mkdir(parents=True, exist_ok=True)
+                RATES_FILE.write_text(saved)
+                LAST_RATES[0] = (str(RATES_FILE), saved)
+            except OSError:
+                pass
     else:
         try:
             saved = json.loads(RATES_FILE.read_text())
@@ -475,12 +507,14 @@ def change_signature(config):
 
 
 class Handler(BaseHTTPRequestHandler):
-    def respond(self, status, body, content_type='application/json'):
+    timeout = 60  # a client that stalls mid-request must not hold a thread forever
+
+    def respond(self, status, body, content_type='application/json', cache='no-store'):
         data = body if isinstance(body, bytes) else body.encode() if isinstance(body, str) else json.dumps(body).encode()
         self.send_response(status)
         self.send_header('Content-Type', content_type + '; charset=utf-8')
         self.send_header('Content-Length', str(len(data)))
-        self.send_header('Cache-Control', 'no-store')
+        self.send_header('Cache-Control', cache)
         self.send_header('X-Content-Type-Options', 'nosniff')
         self.end_headers()
         self.wfile.write(data)
@@ -499,7 +533,7 @@ class Handler(BaseHTTPRequestHandler):
         watched = config.get('id')
         with WATCHING_LOCK:
             WATCHING[watched] = WATCHING.get(watched, 0) + 1
-        started = discovered = full = wrote = time.monotonic()
+        started = discovered = full = wrote = changed = time.monotonic()
         signature = last_body = None
         try:
             self.wfile.write(b'retry: 2000\n\n')
@@ -509,6 +543,8 @@ class Handler(BaseHTTPRequestHandler):
                     if now - discovered >= 2:
                         config, discovered = choose(identifier), now
                     current = change_signature(config)
+                    if current != signature:
+                        changed = now
                     if current != signature or now - full >= 5:
                         signature, full = current, now
                         body = json.dumps(chat_payload(config, shell_mode, limit))
@@ -522,11 +558,11 @@ class Handler(BaseHTTPRequestHandler):
                     self.wfile.write(b'event: unavailable\ndata: {}\n\n')
                     wrote = now
                     time.sleep(1)
-                if now - wrote >= 15:
-                    self.wfile.write(b': keepalive\n\n')
+                if now - wrote >= KEEPALIVE:  # a named event: the page counts it as proof the stream is alive (comments are invisible to it)
+                    self.wfile.write(b'event: idle\ndata: {}\n\n')
                     wrote = now
                 self.wfile.flush()
-                time.sleep(.4)
+                time.sleep(.4 if now - changed < 10 else .8)  # idle chats poll tmux half as often
         except (BrokenPipeError, ConnectionResetError, TimeoutError):
             return
         finally:
@@ -553,7 +589,10 @@ class Handler(BaseHTTPRequestHandler):
         if not auth.same_origin(self.headers.get('Origin', ''), self.headers.get('Host', '')):
             self.respond(403, {'error': 'Reload the page and try again.'})
             return
-        size = int(self.headers.get('Content-Length', '0') or 0)
+        try:
+            size = int(self.headers.get('Content-Length', '0') or 0)
+        except ValueError:
+            size = 0
         if not 0 < size <= 1024:
             self.respond(400, {'error': 'Invalid request.'})
             return
@@ -623,14 +662,14 @@ class Handler(BaseHTTPRequestHandler):
                 self.respond(200, UI_ASSETS['index.html'], 'text/html')
             elif path == '/mobile/app.js':
                 self.respond(200, UI_ASSETS['app.js'], 'text/javascript')
-            elif path in ('/mobile/vendor/marked.js', '/mobile/vendor/dompurify.js'):
-                self.respond(200, (ROOT / 'vendor' / path.rsplit('/', 1)[1]).read_text(), 'text/javascript')
-            elif path == '/mobile/sw.js':
-                self.respond(200, (ROOT / 'sw.js').read_text(), 'text/javascript')
+            elif path.startswith('/mobile/vendor/') and '/mobile/' + path.rsplit('/', 1)[1] in STATIC_ASSETS:
+                self.respond(200, STATIC_ASSETS['/mobile/' + path.rsplit('/', 1)[1]], 'text/javascript', 'max-age=86400')
+            elif path == '/mobile/sw.js':  # no cache: browsers must see service-worker updates
+                self.respond(200, STATIC_ASSETS[path], 'text/javascript')
             elif path == '/mobile/manifest.webmanifest':
-                self.respond(200, (ROOT / 'manifest.webmanifest').read_text(), 'application/manifest+json')
+                self.respond(200, STATIC_ASSETS[path], 'application/manifest+json', 'max-age=86400')
             elif path in ('/mobile/icon-192.png', '/mobile/icon-512.png', '/mobile/apple-touch-icon.png'):
-                self.respond(200, (ROOT / path.rsplit('/', 1)[1]).read_bytes(), 'image/png')
+                self.respond(200, STATIC_ASSETS[path], 'image/png', 'max-age=86400')
             elif path == '/mobile/api/shortcuts':
                 self.respond(200, {'shortcuts': shortcuts.load()})
             elif path == '/mobile/api/push/config':
@@ -650,7 +689,7 @@ class Handler(BaseHTTPRequestHandler):
                 query = parse_qs(urlsplit(self.path).query)
                 self.stream_chat(query.get('session', [None])[0], query.get('mode') == ['shell'], window_limit(query))
             elif path == '/mobile/api/sessions':
-                self.respond(200, {'sessions': [dict({key: entry.get(key) for key in ('id', 'tmux_session', 'label', 'agent', 'thread', 'writable')}, dir=home_path(tab_folder(entry)), **live_status(entry))
+                self.respond(200, {'sessions': [dict({key: entry.get(key) for key in ('id', 'tmux_session', 'label', 'agent', 'thread', 'writable')}, dir=home_path(tab_folder(entry)), **shared_status(entry))
                                                for entry in sessions()], 'default_thread': settings()['thread']})
             elif path == '/mobile/api/tmux-sessions':
                 result = subprocess.run([paths.TMUX, 'list-sessions', '-F', '#{session_id}\t#{session_name}\t#{session_windows}'],

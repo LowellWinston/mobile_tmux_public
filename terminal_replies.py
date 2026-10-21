@@ -10,6 +10,7 @@ import threading
 import time
 import uuid
 import paths
+from activity import insert_by_time
 
 CACHE = paths.CACHE / 'replies'
 LOCK = threading.Lock()
@@ -119,15 +120,23 @@ def started_iso(entry):
         return datetime.now(timezone.utc).isoformat()
 
 
+MISSED = {}  # process key -> when its banner was last looked for and not found
+RETRY = 30
+
+
 def capture_banner(entry, read):
     """Keep the start-up banner as the first chat notice of this agent process, once; it is on the terminal only."""
-    if entry.get('agent') not in ('codex', 'antigravity', 'claude') or not entry.get('process_start') or any(n['id'] == 'terminal:banner' for n in saved(entry)):
+    if entry.get('agent') not in ('codex', 'antigravity', 'claude') or not entry.get('process_start'):
         return
+    if time.monotonic() - MISSED.get(key(entry), -RETRY) < RETRY or any(n['id'] == 'terminal:banner' for n in saved(entry)):
+        return  # a banner that has scrolled away is not worth a 500-line capture on every update
     try:
         text = banner_text(entry['agent'], read(entry))
     except Exception:
         return
-    if text:
+    if not text:
+        MISSED[key(entry)] = time.monotonic()
+    else:
         notice = {'id': 'terminal:banner', 'role': 'assistant', 'kind': 'banner', 'text': text[:MAX_TEXT], 'time': started_iso(entry)}
         with LOCK:
             notices = [n for n in saved(entry) if n['id'] != 'terminal:banner'] + [notice]
@@ -185,16 +194,5 @@ def merge(entry, messages):
     notices = saved(entry)
     if not notices:
         return messages
-
-    def stamp(value):
-        try:
-            return datetime.fromisoformat(value.replace('Z', '+00:00')).timestamp()
-        except (AttributeError, TypeError, ValueError):
-            return 0
-    result = list(messages)
-    for notice in notices:
-        if notice['id'] == 'terminal:banner':
-            notice = dict(notice, kind='banner')  # saved before banners had their own, quieter style
-        later = next((index for index, message in enumerate(result) if stamp(message.get('time')) > stamp(notice['time'])), len(result))
-        result.insert(later, notice)
-    return result
+    # saved before banners had their own, quieter style
+    return insert_by_time(messages, [dict(n, kind='banner') if n['id'] == 'terminal:banner' else n for n in notices])

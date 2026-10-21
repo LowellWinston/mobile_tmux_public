@@ -132,7 +132,7 @@ class AgentNoticeTests(unittest.TestCase):
 
     def test_notice_monitor_captures_without_an_open_web_page(self):
         with tempfile.TemporaryDirectory() as folder, patch.object(quota_notices, 'CACHE', Path(folder)):
-            entry = {'agent': 'claude', 'thread': 'conversation', 'owner_pid': 1, 'writable': True}
+            entry = {'id': '%1', 'agent': 'claude', 'thread': 'conversation', 'owner_pid': 1, 'writable': True}
             def inspect(item):
                 quota_notices.capture(item, "⎿ You're out of extra usage · resets tomorrow\n")
             with patch.object(server, 'sessions', return_value=[entry]), patch.object(server, 'live_status', side_effect=inspect), \
@@ -141,9 +141,6 @@ class AgentNoticeTests(unittest.TestCase):
                     server.monitor_notices()
             self.assertEqual(len(quota_notices.saved(entry)), 1)
 
-
-if __name__ == '__main__':
-    unittest.main()
 
 
 class StartupBannerTests(unittest.TestCase):
@@ -323,3 +320,17 @@ class AntigravityPanelAndModelTests(unittest.TestCase):
                             'Gemini 3.8 Flash (Low). No need to comment on this change."}\\n')
             self.assertEqual(server.antigravity_model({'transcript': str(path)}, {'reported_at': 0}), 'Gemini 3.8 Flash (Low)')
             self.assertIsNone(server.antigravity_model({'transcript': str(path)}, {'reported_at': time.time() + 60}))
+
+
+class InsertByTimeTests(unittest.TestCase):
+    def test_items_land_before_the_first_later_message_and_bad_stamps_sort_first(self):
+        import activity
+        messages = [{'id': 'a', 'time': '2026-10-01T10:00:00Z'}, {'id': 'b', 'time': '2026-10-01T12:00:00+00:00'}]
+        result = activity.insert_by_time(messages, [{'id': 'x', 'time': '2026-10-01T11:00:00Z'}, {'id': 'y', 'time': 'not a time'},
+                                                    {'id': 'z', 'time': '2026-10-01T13:00:00Z'}])
+        self.assertEqual([item['id'] for item in result], ['y', 'a', 'x', 'b', 'z'])
+        self.assertEqual([m['id'] for m in messages], ['a', 'b'])  # the input is not changed
+
+
+if __name__ == '__main__':
+    unittest.main()

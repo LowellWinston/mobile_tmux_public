@@ -73,7 +73,10 @@ def read(path, fresh, consume, trim=None):
                     index, cached['index'] = cached['index'], cached['index'] + 1
                     cached['unterminated'] = not complete
                     if record is not None:
-                        consume(cached['state'], index, record)
+                        try:
+                            consume(cached['state'], index, record)
+                        except (AttributeError, TypeError):  # one odd record (an unexpected null) must not break the whole chat
+                            pass
                         since_trim += 1
                         if trim and since_trim >= 2000:  # keep the first load of a huge file bounded too
                             trim(cached['state'])

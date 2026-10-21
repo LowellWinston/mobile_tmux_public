@@ -122,17 +122,21 @@ def live_entry(pids, cwd=None):
             began = time.time() - float(Path('/proc/uptime').read_text().split()[0]) + int(process_start(owner)) / os.sysconf('SC_CLK_TCK')
         except (OSError, ValueError):
             began = 0
-        taken = locked_elsewhere(pids)
         candidates = []
         for path in CACHE.glob('*.json'):
-            if path.name.endswith(('-bridge-status.json', '-restart-draft.json')) or path.parent.name == 'notices':
+            if path.name.endswith(('-bridge-status.json', '-restart-draft.json')):
                 continue
             try:
+                if path.stat().st_mtime < began:  # a report is written right after its reported_at, so an older file cannot qualify
+                    continue
                 data = json.loads(path.read_text())
-                if data.get('cwd') == cwd and data.get('conversation_id') and data.get('reported_at', 0) >= began and data['conversation_id'] not in taken:
+                if data.get('cwd') == cwd and data.get('conversation_id') and data.get('reported_at', 0) >= began:
                     candidates.append(data)
             except (OSError, ValueError):
                 continue
+        if candidates:  # the /proc walk is only worth doing when there is something to borrow
+            taken = locked_elsewhere(pids)
+            candidates = [data for data in candidates if data['conversation_id'] not in taken]
         if candidates:
             latest = max(candidates, key=lambda c: c.get('reported_at', 0))
             conversation = latest['conversation_id']
@@ -184,15 +188,19 @@ def window_active(label, model_name):
 
 def account_quota():
     """Quota windows are account-wide, so the most recent report of any conversation stands in for one that has none."""
-    best = {}
-    for path in CACHE.glob('*-*-*-*-*.json'):
+    def modified(path):
+        try:
+            return path.stat().st_mtime
+        except OSError:
+            return 0
+    for path in sorted(CACHE.glob('*-*-*-*-*.json'), key=modified, reverse=True):  # newest report first: the first with a quota wins
         try:
             data = json.loads(path.read_text())
         except (OSError, ValueError):
             continue
-        if isinstance(data, dict) and data.get('quota') and data.get('reported_at', 0) > best.get('reported_at', 0):
-            best = data
-    return {'quota': best['quota']} if best else {}
+        if isinstance(data, dict) and data.get('quota'):
+            return {'quota': data['quota']}
+    return {}
 
 
 def snapshot(entry, clean, read_records, normalize_usage):

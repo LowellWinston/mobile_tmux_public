@@ -8,6 +8,7 @@ import unittest
 from unittest.mock import patch
 
 import antigravity
+import paths
 import server
 import terminal_input as terminal
 
@@ -159,7 +160,12 @@ class SessionControlTests(unittest.TestCase):
     def wait_until(condition, timeout=10):
         # Real tmux and bash timing varies a lot on a busy CI runner, so poll instead of sleeping a fixed time.
         deadline = time.monotonic() + timeout
-        while not condition():
+        while True:
+            try:
+                if condition():
+                    return
+            except RuntimeError:  # a pane whose shell is still starting is not ready yet
+                pass
             if time.monotonic() > deadline:
                 raise AssertionError('Timed out waiting for the shell.')
             time.sleep(.05)
@@ -174,13 +180,13 @@ class SessionControlTests(unittest.TestCase):
                 return subprocess.run(['tmux', '-S', socket, *argv[1:]], **kwargs)
             try:
                 pane = terminal.create_session('work', str(folder), run=run)
-                pid = int(run(['/usr/bin/tmux', 'display-message', '-p', '-t', pane, '#{pane_pid}'], capture_output=True, text=True).stdout)
+                pid = int(run([paths.TMUX, 'display-message', '-p', '-t', pane, '#{pane_pid}'], capture_output=True, text=True).stdout)
                 entry = {'id': pane, 'agent': 'shell', 'pane_pid': pid, 'pane_start': terminal.process_start(pid)}
                 with self.assertRaises(RuntimeError):
                     terminal.create_session('work', str(folder), run=run)
                 self.wait_until(lambda: terminal.shell_prompt(entry, run).endswith('$'))
                 terminal.shell_submit(entry, 'cd child', run=run)
-                current = lambda: run(['/usr/bin/tmux', 'display-message', '-p', '-t', pane, '#{pane_current_path}'], capture_output=True, text=True).stdout.strip()
+                current = lambda: run([paths.TMUX, 'display-message', '-p', '-t', pane, '#{pane_current_path}'], capture_output=True, text=True).stdout.strip()
                 self.wait_until(lambda: current() == str(folder / 'child'))
                 self.assertEqual(current(), str(folder / 'child'))
                 self.wait_until(lambda: terminal.shell_prompt(entry, run).endswith('$'))
@@ -188,7 +194,7 @@ class SessionControlTests(unittest.TestCase):
                 self.wait_until(lambda: (folder / 'child/result.txt').exists())
                 self.wait_until(lambda: terminal.shell_prompt(entry, run).endswith('$'))
                 self.assertEqual((folder / 'child/result.txt').read_text(), 'shell-command-ok')
-                run(['/usr/bin/tmux', 'send-keys', '-t', pane, '-l', 'keep this draft'], check=True)
+                run([paths.TMUX, 'send-keys', '-t', pane, '-l', 'keep this draft'], check=True)
                 time.sleep(.1)
                 with self.assertRaises(RuntimeError):
                     terminal.shell_submit(entry, 'replacement', run=run)
@@ -570,6 +576,23 @@ class StreamTests(unittest.TestCase):
             self.assertEqual(next_event()['value'], 1)
             self.assertLess(time.monotonic() - started, 2)
 
+    def test_an_unchanged_chat_still_sends_a_named_idle_event(self):
+        import http.client, threading
+        from http.server import ThreadingHTTPServer
+        config = {'id': '%x', 'agent': 'claude', 'transcript': None}
+        with patch.object(server, 'choose', return_value=config), patch.object(server, 'KEEPALIVE', .3), \
+             patch.object(server, 'change_signature', return_value=(0,)), \
+             patch.object(server, 'chat_payload', return_value={'messages': []}):
+            httpd = ThreadingHTTPServer(('127.0.0.1', 0), server.Handler)
+            threading.Thread(target=httpd.serve_forever, daemon=True).start()
+            self.addCleanup(httpd.shutdown)
+            connection = http.client.HTTPConnection('127.0.0.1', httpd.server_address[1], timeout=5)
+            self.addCleanup(connection.close)
+            connection.request('GET', '/mobile/api/stream?session=%25x')
+            response = connection.getresponse()
+            lines = [response.fp.readline().decode().strip() for _ in range(12)]
+            self.assertIn('event: idle', lines)  # the page ignores comments, so only a named event keeps it from polling
+
 
 class PushTests(unittest.TestCase):
     ENTRY = {'id': '%5', 'label': 'work', 'agent': 'claude'}
@@ -631,15 +654,17 @@ class PushTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             push.subscribe({'endpoint': 'https://evil.example/x', 'keys': subscription['keys']}, store)
 
-        class Gone(push.WebPushException if push.available() else Exception):
+        if not push.available():
+            self.skipTest('pywebpush is not installed')
+
+        class Gone(push.WebPushException):
             def __init__(self):
                 self.response = __import__('types').SimpleNamespace(status_code=410)
         def sender(**kwargs):
             raise Gone()
-        if push.available():
-            with patch.object(push, 'vapid_keys', return_value=(self.pem, 'pub')):
-                push.send_all({'title': 't'}, store=store, sender=sender)
-            self.assertEqual(push.load(store), {})
+        with patch.object(push, 'vapid_keys', return_value=(self.pem, 'pub')):
+            push.send_all({'title': 't'}, store=store, sender=sender)
+        self.assertEqual(push.load(store), {})
 
     @classmethod
     def setUpClass(cls):
@@ -699,6 +724,10 @@ class HistoryCacheTests(unittest.TestCase):
         self.write('{"n":2}\n', 'a')
         self.assertEqual(self.read(), [(0, 0), (1, 1), (2, 2)])
         self.assertEqual(self.calls, [0, 1, 2])  # each record consumed exactly once
+
+    def test_a_record_the_parser_cannot_handle_is_skipped_not_fatal(self):
+        self.write('{"n":0}\n[1]\n{"n":2}\n')  # the list makes record['n'] raise TypeError
+        self.assertEqual(self.read(), [(0, 0), (2, 2)])
 
     def test_a_record_still_being_written_waits_for_its_end(self):
         self.write('{"n":0}\n{"n":')
@@ -773,7 +802,7 @@ class LiveScreenTests(unittest.TestCase):
     def test_capture_requests_scrollback_and_trims_blank_ends_and_trailing_spaces(self):
         run, calls = self.fake('line one   \n\n  indented\n\n\n')
         self.assertEqual(terminal.capture_screen(self.ENTRY, 80, run), 'line one\n\n  indented')
-        self.assertEqual(calls[0][:6], ['/usr/bin/tmux', 'capture-pane', '-p', '-t', '%9', '-S'])
+        self.assertEqual(calls[0][:6], [paths.TMUX, 'capture-pane', '-p', '-t', '%9', '-S'])
         self.assertEqual(calls[0][6], '-80')
 
     def test_only_the_last_lines_are_kept_and_the_limit_is_clamped(self):
@@ -886,9 +915,6 @@ class CacheCapTests(unittest.TestCase):
         self.assertEqual(data['messages'][-1]['text'], 'turn 399')
 
 
-if __name__ == '__main__':
-    unittest.main()
-
 
 class CodexThreadTests(unittest.TestCase):
     """A fresh Codex session must not borrow the history of an older conversation in the same directory."""
@@ -928,6 +954,7 @@ class CodexThreadTests(unittest.TestCase):
             self.assertEqual(agents.codex_thread(db, child.pid, self.started(), '/work'), (uuid, '/r/resumed'))
         finally:
             child.kill()
+            child.wait()
 
 
 class ShortcutTests(unittest.TestCase):
@@ -1014,6 +1041,17 @@ class CodexMetricsTests(unittest.TestCase):
         self.assertEqual(report['five_hour']['percent'], 12.0)
         self.assertTrue(report['allowance_inherited'])
 
+    def test_allowances_are_rewritten_when_the_file_moves_or_is_deleted(self):
+        windows = [{'label': '5h', 'percent': 5.0, 'resets_at': time.time() + 3600, 'window_minutes': 300}]
+        usage = ({'percent': 10.0}, windows, '2026-10-16T00:00:00Z')
+        server.codex_metrics({'id': '%1'}, usage)
+        server.RATES_FILE.unlink()
+        server.codex_metrics({'id': '%1'}, usage)  # same content, file gone
+        self.assertTrue(server.RATES_FILE.exists())
+        with tempfile.TemporaryDirectory() as other, patch.object(server, 'RATES_FILE', Path(other) / 'rates.json'):
+            server.codex_metrics({'id': '%1'}, usage)  # same content, different file
+            self.assertTrue(server.RATES_FILE.exists())
+
     def test_a_reporting_session_is_not_marked_inherited(self):
         windows = [{'label': '5h', 'percent': 5.0, 'resets_at': time.time() + 3600, 'window_minutes': 300}]
         report = server.codex_metrics({'id': '%1'}, ({'percent': 10.0}, windows, '2026-10-16T00:00:00Z'))
@@ -1082,7 +1120,7 @@ class PickerEnterTests(unittest.TestCase):
         state = {'enters': 0, 'screen': 'history\n' + '─' * 8 + '\n❯\xa0\n' + '─' * 8}
         def run(argv, **kwargs):
             out = ''
-            if argv[:2] == ['/usr/bin/tmux', 'capture-pane']:
+            if argv[:2] == [paths.TMUX, 'capture-pane']:
                 out = state['screen']
             elif 'paste-buffer' in argv:
                 state['screen'] = 'history\n' + '─' * 8 + '\n❯\xa0/model\n' + '─' * 8
@@ -1176,3 +1214,40 @@ def test_folder_note_is_given_once_per_cd(tmp_path, monkeypatch):
     assert shell_log.folder_note('%1', '/home/user') == ''
     shell_log._save('%2', {'cwd': str(tmp_path), 'moved_at': 5.0})
     assert shell_log.folder_note('%2', str(tmp_path)) == ''
+
+
+class SharedCacheTests(unittest.TestCase):
+    def setUp(self):
+        self.addCleanup(lambda: (server.SESSIONS_CACHE.__setitem__(slice(None), [0.0, []]), server.STATUS_CACHE.clear()))
+        server.SESSIONS_CACHE[:] = [0.0, []]
+        server.STATUS_CACHE.clear()
+
+    def test_sessions_are_discovered_once_a_second_for_everyone(self):
+        with patch.object(server, 'discover', return_value=['a']) as discover, patch.object(server, 'settings', return_value={}):
+            self.assertEqual((server.sessions(), server.sessions()), (['a'], ['a']))
+            self.assertEqual(discover.call_count, 1)
+            server.SESSIONS_CACHE[0] -= 2  # a second later
+            server.sessions()
+            self.assertEqual(discover.call_count, 2)
+
+    def test_status_is_shared_and_a_vanished_pane_is_unavailable_not_fatal(self):
+        with patch.object(server, 'live_status', return_value={'state': 'Idle', 'approval': None}) as status:
+            server.shared_status({'id': '%1'})
+            server.shared_status({'id': '%1'})
+            self.assertEqual(status.call_count, 1)
+        with patch.object(server, 'live_status', side_effect=subprocess.CalledProcessError(1, 'tmux')):
+            self.assertEqual(server.shared_status({'id': '%2'})['state'], 'Unavailable')
+
+    def test_banner_that_is_not_on_screen_is_not_searched_for_again_at_once(self):
+        import terminal_replies
+        reads = []
+        entry = {'agent': 'claude', 'process_start': '1', 'owner_pid': 7}
+        with tempfile.TemporaryDirectory() as folder, patch.object(terminal_replies, 'CACHE', Path(folder)):
+            terminal_replies.MISSED.clear()
+            for _ in range(3):
+                terminal_replies.capture_banner(entry, lambda e: reads.append(1) or 'no banner here')
+        self.assertEqual(len(reads), 1)
+
+
+if __name__ == '__main__':
+    unittest.main()

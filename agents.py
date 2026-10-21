@@ -278,7 +278,12 @@ def claude_snapshot(entry, clean):
     rate_metrics = metrics
     inherited = False
     if not metrics.get('rate_limits'):
-        candidates = sorted(METRICS.glob('*.json'), key=lambda path: path.stat().st_mtime, reverse=True)
+        def modified(path):
+            try:
+                return path.stat().st_mtime
+            except OSError:  # replaced or removed since the glob
+                return 0
+        candidates = sorted(METRICS.glob('*.json'), key=modified, reverse=True)
         for path in candidates:
             try:
                 candidate = json.loads(path.read_text())
