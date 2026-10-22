@@ -3,9 +3,7 @@
 How the chat view works in detail. See the [README](../README.md) for installing and running it.
 
 Mobile Tmux is a phone interface for live
-Codex, Claude Code, and Antigravity conversations in tmux. Compact session tabs scroll
-horizontally within their own area, with a fixed opaque area reserved for the usage rings,
-and show each agent's icon and Idle/Approval state. Working status appears
+Codex, Claude Code, and Antigravity conversations in tmux. The bar at the top shows only the current session, with its agent icon, folder and Idle/Working/Approval state; tapping it opens the list of all sessions, with a count of the others that need you, and a line under the bar names any other session waiting for approval or input. Usage rings sit beside it. Working status appears
 directly after the latest user message in the chat. Three rings
 show 5-hour allowance, weekly allowance, and context use; tap for figures and reset times.
 The + control creates a new detached tmux session in the selected pane’s directory.
@@ -53,7 +51,7 @@ Unrecognized prompts require Termius.
 Commands truncated by the native terminal are also truncated in the panel; expand them
 in Termius before deciding. Permission display depends on each agent's terminal format.
 
-History polls every two seconds while visible; background polling pauses. New messages
+The server pushes each change to the open chat over a live stream (with a heartbeat every ten seconds); the page polls every two seconds only when the stream goes quiet or drops, and both pause while the page is in the background. New messages
 and updates to existing replies automatically scroll to the latest content. Unchanged
 polls preserve your reading position; scroll positions on tab switches and composer drafts
 are kept per conversation. All saved user/assistant text is available,

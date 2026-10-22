@@ -59,7 +59,7 @@ First run: each agent asks to trust the folder, and the page shows that prompt a
 ## Quick start
 
 ```bash
-git clone https://github.com/LowellWinston/mobile_tmux.git
+git clone https://github.com/LowellWinston/mobile_tmux_public.git mobile_tmux
 cd mobile_tmux
 python3 deploy/install.py --hooks     # systemd user service, plus the usage-ring hooks
 ```
