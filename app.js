@@ -416,7 +416,7 @@ async function refreshTabs() {
   } catch (error) { status.textContent = error.message; }
   finally { loadingTabs = false; }
 }
-let stream = null, streamKey = '', lastPush = 0, queuedPush = null, windowLimit = 150, loadingEarlier = null;
+let wasBusy = false, stream = null, streamKey = '', lastPush = 0, queuedPush = null, windowLimit = 150, loadingEarlier = null;
 const earlierButton = document.createElement('button');
 earlierButton.id = 'earlier'; earlierButton.type = 'button';
 earlierButton.addEventListener('click', () => {
@@ -570,14 +570,19 @@ async function refresh(pushed) {
     const lastUser = [...chat.querySelectorAll('.message.user')].at(-1);
     if (lastUser) lastUser.after(working); else chat.prepend(working);
     updateUsage(data.usage);
+    const busy = !!(data.busy || data.state === 'Working');
     if (loadingEarlier && data.limit === loadingEarlier.limit) {
       if (changed) scrollTo(0, document.documentElement.scrollHeight - loadingEarlier.offset);
       loadingEarlier = null;
     } else if (initial) {
       const saved = views.get(selected + ':' + thread);
       if (saved && !saved.follow) scrollTo(0, saved.scroll); else bottom();
-    } else if (changed && !loadingEarlier) bottom();
-    initial = false;
+    } else if (!loadingEarlier) {
+      // While the agent works the page stays where the reader is; it moves to the latest once the agent has finished.
+      if (!busy && (changed || wasBusy || !latest.hidden)) bottom();
+      else if (busy && changed) latest.hidden = false;
+    }
+    wasBusy = busy; initial = false;
   } catch (error) { if (version === generation) { status.textContent = error.message; setState(selected, 'Offline'); } }
   finally {
     refreshing = false;
@@ -591,6 +596,7 @@ async function refresh(pushed) {
   }
 }
 latest.addEventListener('click', bottom);
+addEventListener('scroll', () => { if (!latest.hidden && nearBottom()) latest.hidden = true; }, {passive: true});
 // Live screen: a read-only view of the tmux pane itself, for anything the chat view does not show.
 const screenDialog = document.querySelector('#screen-dialog'), screenText = document.querySelector('#screen-text'), screenMeta = document.querySelector('#screen-meta');
 let screenTimer = null, screenLines = 80, screenBusy = false, screenLast = '';

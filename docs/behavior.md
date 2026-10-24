@@ -51,8 +51,8 @@ Unrecognized prompts require Termius.
 Commands truncated by the native terminal are also truncated in the panel; expand them
 in Termius before deciding. Permission display depends on each agent's terminal format.
 
-The server pushes each change to the open chat over a live stream (with a heartbeat every ten seconds); the page polls every two seconds only when the stream goes quiet or drops, and both pause while the page is in the background. New messages
-and updates to existing replies automatically scroll to the latest content. Unchanged
+The server pushes each change to the open chat over a live stream (with a heartbeat every ten seconds); the page polls every two seconds only when the stream goes quiet or drops, and both pause while the page is in the background. While the agent is working the page stays where you are and a "Latest" button
+appears when there is new content; once the agent has finished, the page moves to the latest content. Unchanged
 polls preserve your reading position; scroll positions on tab switches and composer drafts
 are kept per conversation. All saved user/assistant text is available,
 without an extra retention cap. Responses appear when persisted, not necessarily token by
