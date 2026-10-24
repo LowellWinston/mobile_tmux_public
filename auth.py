@@ -20,6 +20,7 @@ COOKIE = 'mobile_tmux_session'
 MAX_AGE = 30 * 86400
 TOKEN_FILE = paths.CONFIG / 'token'
 LIMIT, WINDOW = 5, 300   # failed sign-ins allowed per client per window (seconds)
+TRUST_FORWARDED = os.environ.get('MOBILE_TMUX_TRUST_FORWARDED') == '1'  # off by default: a proxy that passes the client's own header through would let anyone dodge the limit
 _failures = {}
 _token = [None, '']
 _lock = threading.Lock()
@@ -76,6 +77,13 @@ def signed_in(cookie_text):
         if name == COOKIE and hmac.compare_digest(value.encode(), session_value().encode()):
             return True
     return False
+
+
+def client_id(peer, forwarded):
+    """Who is signing in. Behind a local proxy every request comes from loopback, so with MOBILE_TMUX_TRUST_FORWARDED=1 the
+    address the proxy put last in X-Forwarded-For stands for the person; otherwise (or from anywhere else) it is the peer."""
+    last = (forwarded or '').split(',')[-1].strip()
+    return last[:64] if TRUST_FORWARDED and last and is_loopback(peer) else peer
 
 
 def attempt(client, candidate):

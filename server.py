@@ -597,7 +597,7 @@ class Handler(BaseHTTPRequestHandler):
             self.respond(400, {'error': 'Invalid request.'})
             return
         candidate = parse_qs(self.rfile.read(size).decode('utf-8', 'ignore')).get('token', [''])[0]
-        outcome = auth.attempt(self.client_address[0], candidate)
+        outcome = auth.attempt(auth.client_id(self.client_address[0], self.headers.get('X-Forwarded-For')), candidate)
         if outcome == 'ok':
             secure = self.headers.get('X-Forwarded-Proto') == 'https' or self.headers.get('Origin', '').startswith('https://')
             self.send_response(303)

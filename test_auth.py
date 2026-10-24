@@ -75,6 +75,14 @@ class AuthTests(unittest.TestCase):
         self.assertEqual(self.sign_in('nope')[0].status, 401)
         self.assertEqual(self.request('GET', '/mobile/api/sessions', headers={'Cookie': auth.COOKIE + '=forged'})[0].status, 401)
 
+    def test_client_id_uses_the_proxy_address_only_when_trusted_and_local(self):
+        with mock.patch.object(auth, 'TRUST_FORWARDED', False):
+            self.assertEqual(auth.client_id('127.0.0.1', '9.9.9.9'), '127.0.0.1')  # off by default
+        with mock.patch.object(auth, 'TRUST_FORWARDED', True):
+            self.assertEqual(auth.client_id('127.0.0.1', '1.1.1.1, 9.9.9.9'), '9.9.9.9')  # the proxy's own entry, not the client's
+            self.assertEqual(auth.client_id('127.0.0.1', None), '127.0.0.1')
+            self.assertEqual(auth.client_id('203.0.113.5', '9.9.9.9'), '203.0.113.5')  # a direct caller cannot pick its own identity
+
     def test_repeated_failures_are_blocked_even_for_the_right_token(self):
         for _ in range(auth.LIMIT):
             self.sign_in('nope')

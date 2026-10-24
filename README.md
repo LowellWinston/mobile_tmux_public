@@ -121,6 +121,7 @@ All optional, set as environment variables (for the systemd service, add `Enviro
 | `MOBILE_TMUX_HOST` | `127.0.0.1` | Address to listen on. |
 | `MOBILE_TMUX_PORT` | `7683` | Port to listen on. |
 | `MOBILE_TMUX_AUTH` | `token` | `token` or `proxy` (see above). |
+| `MOBILE_TMUX_TRUST_FORWARDED` | off | Set to `1` behind a local reverse proxy that sets `X-Forwarded-For` itself (the nginx example does), so failed sign-ins are counted per person instead of all together. Leave it off if the proxy passes the client's own header through. |
 | `MOBILE_TMUX_TTYD_PORT` | `7682` | Where the optional ttyd runs. |
 | `MOBILE_TMUX_PUSH_SUBJECT` | `mailto:mobile-tmux@localhost` | Contact (a `mailto:` or `https:` URL) sent to push services. Set your own email if you use push. |
 | `MOBILE_TMUX_HOME` | your home | Where agent folders (`~/.claude`, `~/.codex`, `~/.gemini`) are looked up. |
