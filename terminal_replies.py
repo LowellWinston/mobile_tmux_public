@@ -71,7 +71,7 @@ def banner_text(agent, screen):
             return ''
         block = []
         for line in lines[begin:]:
-            if line.strip().startswith('›') or ('Context' in line and '·' in line):
+            if line.strip().startswith(('›', '•')) or ('Context' in line and '·' in line):  # the prompt or the conversation: not banner
                 break
             block.append(line.strip().lstrip('>_').strip() if not block else line.strip())
     elif agent == 'antigravity':
@@ -124,11 +124,12 @@ MISSED = {}  # process key -> when its banner was last looked for and not found
 RETRY = 30
 
 
-def capture_banner(entry, read):
-    """Keep the start-up banner as the first chat notice of this agent process, once; it is on the terminal only."""
+def capture_banner(entry, read, refresh=False):
+    """Keep the start-up banner as the first chat notice of this agent process, once; it is on the terminal only.
+    `refresh` is for a screen that has just been cleared: the banner on it replaces the saved one."""
     if entry.get('agent') not in ('codex', 'antigravity', 'claude') or not entry.get('process_start'):
         return
-    if time.monotonic() - MISSED.get(key(entry), -RETRY) < RETRY or any(n['id'] == 'terminal:banner' for n in saved(entry)):
+    if not refresh and (time.monotonic() - MISSED.get(key(entry), -RETRY) < RETRY or any(n['id'] == 'terminal:banner' for n in saved(entry))):
         return  # a banner that has scrolled away is not worth a 500-line capture on every update
     try:
         text = banner_text(entry['agent'], read(entry))
@@ -137,7 +138,11 @@ def capture_banner(entry, read):
     if not text:
         MISSED[key(entry)] = time.monotonic()
     else:
-        notice = {'id': 'terminal:banner', 'role': 'assistant', 'kind': 'banner', 'text': text[:MAX_TEXT], 'time': started_iso(entry)}
+        old = next((n for n in saved(entry) if n['id'] == 'terminal:banner'), None)
+        if refresh and old and old['text'] == text[:MAX_TEXT]:
+            return
+        notice = {'id': 'terminal:banner', 'role': 'assistant', 'kind': 'banner', 'text': text[:MAX_TEXT],
+                  'time': datetime.now(timezone.utc).isoformat() if refresh and old else started_iso(entry)}
         with LOCK:
             notices = [n for n in saved(entry) if n['id'] != 'terminal:banner'] + [notice]
             CACHE.mkdir(parents=True, exist_ok=True, mode=0o700)

@@ -5,7 +5,7 @@
 
 **Keep working with your coding agent when you're away from your desk.**
 
-Start [Claude Code](https://claude.com/claude-code), [Codex CLI](https://github.com/openai/codex) or Antigravity (`agy`) on your own machine, then carry on from your phone. Read what the agent has done, approve its requests, answer its questions and send the next instruction, from the sofa, the train or a long queue. The agent keeps running in tmux on your computer, so nothing stops when you walk away.
+Start [Claude Code](https://claude.com/claude-code), [Codex CLI](https://github.com/openai/codex), Antigravity (`agy`) or [OpenCode](https://opencode.ai) on your own machine, then carry on from your phone. Read what the agent has done, approve its requests, answer its questions and send the next instruction, from the sofa, the train or a long queue. The agent keeps running in tmux on your computer, so nothing stops when you walk away.
 
 - **Approve without going back.** A long run stops to ask permission. You get the real request as buttons and tap one.
 - **Chat, not a terminal.** The conversation reads like a chat, with tool actions collapsed, instead of a phone-sized terminal.
@@ -53,7 +53,7 @@ First run: each agent asks to trust the folder, and the page shows that prompt a
 
 - Linux (it relies on `/proc` and the agents' file layouts on Linux). macOS is not supported yet.
 - Python 3 (developed and tested on 3.14; older versions are untested) and `tmux`.
-- At least one agent installed and run **inside tmux**: Claude Code, Codex CLI, or Antigravity.
+- At least one agent installed and run **inside tmux**: Claude Code, Codex CLI, Antigravity, or OpenCode.
 - Optional: [`ttyd`](https://github.com/tsl0922/ttyd) for the full interactive terminal ("Interact"); `pywebpush` for push notifications (`pip install pywebpush`).
 
 ## Quick start

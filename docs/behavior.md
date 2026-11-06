@@ -3,7 +3,7 @@
 How the chat view works in detail. See the [README](../README.md) for installing and running it.
 
 Mobile Tmux is a phone interface for live
-Codex, Claude Code, and Antigravity conversations in tmux. The bar at the top shows only the current session, with its agent icon, folder and Idle/Working/Approval state; tapping it opens the list of all sessions, with a count of the others that need you, and a line under the bar names any other session waiting for approval or input. Usage rings sit beside it. Working status appears
+Codex, Claude Code, Antigravity, and OpenCode conversations in tmux. The bar at the top shows only the current session, with its agent icon, folder and Idle/Working/Approval state; tapping it opens the list of all sessions, with a count of the others that need you, and a line under the bar names any other session waiting for approval or input. Usage rings sit beside it. Working status appears
 directly after the latest user message in the chat. Three rings
 show 5-hour allowance, weekly allowance, and context use; tap for figures and reset times.
 The + control creates a new detached tmux session in the selected pane’s directory.
@@ -19,10 +19,12 @@ The bridge discovers panes every five seconds. Codex maps to the newest non-arch
 CLI/IDE thread in the pane's directory, excluding subagents. Multiple Codex panes with
 the same directory are ambiguous and cannot send. Claude maps to its live registry's
 process and exact tmux pane. Antigravity maps to the conversation lock held by its live
-process. Before Antigravity creates a conversation, its startup view is bound to the exact
+process. OpenCode maps to the conversation named by its `-s` flag, else the newest top-level
+session in the pane's directory touched since the process started; its history is read from
+`~/.local/share/opencode/opencode.db`. Before Antigravity creates a conversation, its startup view is bound to the exact
 process and start time, so folder-trust choices can be answered from the phone. Plain shell
 commands are enabled only after choosing No agent. Their tabs offer fixed
-Codex, Claude, and Antigravity launch buttons, protected by an idle-shell and empty-draft
+Codex, Claude, Antigravity, and OpenCode launch buttons, protected by an idle-shell and empty-draft
 check. Starting a different agent in a pane automatically updates its chat mapping.
 Launch buttons start a new CLI session in the pane’s current directory. During startup,
 the composer shows “Starting …” and readiness checks temporarily run more frequently.
@@ -79,4 +81,9 @@ Usage comes from native reports, without estimates:
 - Antigravity: `antigravity_status.py` captures official status-line usage, model, and state
   fields in `~/.cache/mobile-tmux/antigravity/<conversation>.json`. Model-specific quotas
   choose the reported Gemini or Claude allowance bucket.
+- OpenCode: has no 5-hour or weekly allowance. The meter shows the session's recorded cost
+  (`$`) and context use, with the context size taken from OpenCode's own model catalogue
+  (`~/.cache/opencode/models.json`); a model missing from it shows the token count only.
+  Its permission prompts (Allow once / Allow always / Reject, then Confirm / Cancel) become
+  buttons; the selected option is read from the screen's highlight.
 Missing or expired allowance reports show unavailable. Agent reports can lag behind activity.

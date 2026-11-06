@@ -1,11 +1,13 @@
 """Checks for session creation, shell input, and pre-conversation trust dialogs."""
+import json
 import os
+import shutil
 import subprocess
 import tempfile
 import time
 from pathlib import Path
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import antigravity
 import paths
@@ -114,7 +116,7 @@ class SessionControlTests(unittest.TestCase):
             self.assertTrue(entry['pending_conversation'])
 
     def test_start_agent_uses_direct_shortcuts_without_paths(self):
-        self.assertEqual(terminal.LAUNCHERS, {'codex': 'codex', 'claude': 'claude', 'antigravity': 'agy'})
+        self.assertEqual(terminal.LAUNCHERS, {'codex': 'codex', 'claude': 'claude', 'antigravity': 'agy', 'opencode': 'opencode'})
         for agent, cmd in (('codex', 'codex'), ('claude', 'claude'), ('antigravity', 'agy')):
             calls = []
             def run(argv, **kwargs):
@@ -127,7 +129,7 @@ class SessionControlTests(unittest.TestCase):
                 return subprocess.CompletedProcess(argv, 0, stdout='')
             entry = {'id': '%1', 'agent': 'shell'}
             with patch.object(terminal, 'shell_prompt', side_effect=['user@host:~$', 'user@host:~$', 'user@host:~$ ' + cmd]), \
-                 patch.object(terminal.time, 'sleep'):
+                 patch.object(terminal, 'time', Mock(wraps=time, sleep=Mock())):
                 terminal.start_agent(entry, agent, run=run)
             self.assertEqual(calls[0], ('load-buffer', cmd.encode()))
             self.assertEqual(calls[-1], ('send-keys', 'Enter'))
@@ -138,13 +140,12 @@ class SessionControlTests(unittest.TestCase):
             return subprocess.CompletedProcess(argv, 0, stdout='')
         # Delayed echo: initial, pre-paste check, poll 1 (not arrived yet), poll 2 (arrived with extra spacing)
         with patch.object(terminal, 'shell_prompt', side_effect=['user@host:~$', 'user@host:~$', 'user@host:~$', 'user@host:~$  agy  ']), \
-             patch.object(terminal.time, 'sleep'):
+             patch.object(terminal, 'time', Mock(wraps=time, sleep=Mock())):
             terminal.start_agent(entry, 'antigravity', run=run)
 
         # Timeout failure if command never appears
         with patch.object(terminal, 'shell_prompt', return_value='user@host:~$'), \
-             patch.object(terminal.time, 'monotonic', side_effect=[0, 0, 10]), \
-             patch.object(terminal.time, 'sleep'):
+             patch.object(terminal, 'time', Mock(wraps=time, monotonic=Mock(side_effect=[0, 0, 10]), sleep=Mock())):
             with self.assertRaises(RuntimeError) as ctx:
                 terminal.start_agent(entry, 'antigravity', run=run)
             self.assertIn('Could not confirm the launch command', str(ctx.exception))
@@ -171,6 +172,8 @@ class SessionControlTests(unittest.TestCase):
             time.sleep(.05)
 
     def test_real_tmux_session_creation_and_no_agent_commands(self):
+        if not shutil.which('tmux'):
+            self.skipTest('tmux is not installed')
         with tempfile.TemporaryDirectory() as folder:
             folder = Path(folder)
             socket = str(folder / 'tmux.sock')
@@ -239,7 +242,7 @@ class DraftHandlingTests(unittest.TestCase):
     entry = {'id': '%1', 'agent': 'claude'}
 
     def setUp(self):
-        for target in (patch.object(terminal, 'verify'), patch.object(terminal.time, 'sleep')):
+        for target in (patch.object(terminal, 'verify'), patch.object(terminal, 'time', Mock(wraps=time, sleep=Mock()))):
             target.start()
             self.addCleanup(target.stop)
 
@@ -304,6 +307,7 @@ class TranscriptParsingTests(unittest.TestCase):
         rows = [{'type': 'attachment', 'attachment': {'type': 'queued_command', 'prompt': 'sent mid-turn'}},
                 {'type': 'user', 'message': {'role': 'user', 'content': '<command-name>/status</command-name>\n<command-message>status</command-message>\n<command-args></command-args>'}},
                 {'type': 'user', 'message': {'role': 'user', 'content': '<local-command-stdout>\x1b[1mAll good\x1b[0m</local-command-stdout>'}},
+                {'type': 'user', 'message': {'role': 'user', 'content': '<task-notification>\n<task-id>bpesvugr7</task-id>\n<status>completed</status>\n<summary>Background command completed (exit code 0)</summary>\n</task-notification>'}},
                 {'type': 'assistant', 'message': {'role': 'assistant', 'content': [{'type': 'tool_use', 'name': 'Bash', 'input': {'command': 'git status'}}]}}]
         messages = self.claude(rows)
         self.assertEqual([(m['role'], m.get('kind'), m['text']) for m in messages], [
@@ -373,6 +377,7 @@ class CodexTimeMatchTests(unittest.TestCase):
     def test_each_process_owns_the_conversations_begun_after_it_started(self):
         import sqlite3, agents
         db = sqlite3.connect(':memory:')
+        self.addCleanup(db.close)
         db.execute('CREATE TABLE threads (id, rollout_path, cwd, created_at_ms, updated_at_ms, source, archived)')
         db.execute("INSERT INTO threads VALUES ('old','/o','/a',1000000,9000000,'vscode',0)")
         db.execute("INSERT INTO threads VALUES ('new','/n','/b',5000000,6000000,'vscode',0)")
@@ -409,6 +414,42 @@ class ShellLogTests(unittest.TestCase):
     def test_empty_command_is_refused(self):
         with self.assertRaises(ValueError):
             self.shell_log.run('%3', '   ', '/tmp')
+
+    def test_tmux_rename_requires_a_target_without_touching_other_sessions(self):
+        import shlex
+        socket = str(Path(self.directory) / 'tmux.sock')
+        tmux = 'tmux -S ' + shlex.quote(socket)
+        def sessions():
+            return set(subprocess.run(['tmux', '-S', socket, 'list-sessions', '-F', '#{session_name}'],
+                                      check=True, capture_output=True, text=True).stdout.splitlines())
+        try:
+            for name in ('first', 'second'):
+                subprocess.run(['tmux', '-S', socket, 'new-session', '-d', '-s', name, 'sleep', '60'], check=True)
+            for command in (
+                tmux + ' rename-session accidental',
+                tmux + ' rename accidental',
+                tmux + ' rename-session -t "" accidental',
+                tmux + ' list-sessions >/dev/null; ' + tmux + ' rename accidental',
+                tmux + ' list-sessions \\; rename-session accidental',
+                'tool=tmux; "$tool" -S ' + shlex.quote(socket) + ' rename accidental',
+            ):
+                with self.subTest(command=command):
+                    message = self.shell_log.run('%rename-test', command, self.directory)
+                    self.assertIn('Refusing tmux rename without an explicit target', message['text'])
+                    self.assertIn('[exit 2]', message['text'])
+                    self.assertEqual(sessions(), {'first', 'second'})
+            message = self.shell_log.run('%rename-test', tmux + " rename-session -t '=first' renamed", self.directory)
+            self.assertNotIn('[exit ', message['text'])
+            self.assertEqual(sessions(), {'renamed', 'second'})
+            message = self.shell_log.run('%rename-test', tmux + ' rename -t=second second-renamed', self.directory)
+            self.assertNotIn('[exit ', message['text'])
+            self.assertEqual(sessions(), {'renamed', 'second-renamed'})
+            message = self.shell_log.run('%rename-test', tmux + ' list-sessions', self.directory)
+            self.assertNotIn('[exit ', message['text'])
+            message = self.shell_log.run('%rename-test', tmux + " display-message -p 'renamed'", self.directory)
+            self.assertNotIn('Refusing', message['text'])
+        finally:
+            subprocess.run(['tmux', '-S', socket, 'kill-server'], capture_output=True)
 
 
 class AttentionTests(unittest.TestCase):
@@ -453,7 +494,7 @@ class AttentionTests(unittest.TestCase):
     def test_live_status_reports_input_needed(self):
         entry = dict(self.CLAUDE, owner_pid=1, writable=True, registry='/nonexistent')
         run = lambda argv, **kwargs: __import__('types').SimpleNamespace(stdout=self.MENU, returncode=0)
-        with patch.object(terminal, 'capture_quota_notices'), patch.object(terminal.time, 'monotonic', side_effect=[0, 5]):
+        with patch.object(terminal, 'capture_quota_notices'), patch.object(terminal, 'time', Mock(wraps=time, monotonic=Mock(side_effect=[0, 5]))):
             self.assertEqual(terminal.live_status(entry, run)['state'], 'Idle')
             status = terminal.live_status(entry, run)
         self.assertEqual(status['state'], 'Input needed')
@@ -485,6 +526,66 @@ class SuggestionTests(unittest.TestCase):
         for hint in ('Press up to edit queued messages', 'Try "fix the tests"'):
             run = lambda argv, hint=hint, **kwargs: __import__('types').SimpleNamespace(stdout=self.styled('\x1b[2m' + hint + '\x1b[0m'), returncode=0)
             self.assertEqual(terminal.suggestion(self.CLAUDE, run), '')
+
+    def test_clipped_suggestion_reads_the_accepted_wrapped_text_without_submitting(self):
+        preview = 'push it and continue with the next produ…'
+        full = 'push it and continue with the next product on the plan'
+        calls = []
+        def run(argv, **kwargs):
+            from types import SimpleNamespace
+            calls.append(argv)
+            if argv[1] == 'send-keys':
+                return SimpleNamespace(stdout='', returncode=0)
+            if '-e' in argv:
+                text = self.styled('\x1b[2m' + preview + '\x1b[0m')
+            else:
+                text = '─' * 8 + '\n❯ push it and continue with the next\n  product on the plan\n' + '─' * 8
+            return SimpleNamespace(stdout=text, returncode=0)
+        with patch.object(terminal, 'verify'), patch.object(terminal, 'empty_prompt'), \
+                patch.object(terminal, 'clear_draft') as clear, patch.object(terminal.time, 'sleep'):
+            self.assertEqual(terminal.expand_suggestion(self.CLAUDE, preview, run), full)
+        clear.assert_called_once_with(self.CLAUDE, run)
+        self.assertEqual([call[4:] for call in calls if call[1] == 'send-keys'], [['Tab']])
+
+    def test_expanding_stale_suggestion_does_not_touch_the_prompt(self):
+        with patch.object(terminal, 'verify'), patch.object(terminal, 'empty_prompt'), \
+                patch.object(terminal, 'suggestion', return_value='a different suggestion…'):
+            with self.assertRaisesRegex(RuntimeError, 'suggestion changed'):
+                terminal.expand_suggestion(self.CLAUDE, 'old suggestion…', run=lambda *a, **k: self.fail('sent a key'))
+
+    def test_expansion_clears_only_the_accepted_suggestion_and_never_sends_enter(self):
+        preview = 'push it and continue with the next produ…'
+        full = 'push it and continue with the next product on the plan'
+        class Pane(FakeClaudePane):
+            def __call__(self, argv, **kwargs):
+                if argv[1] == 'send-keys' and argv[4:] == ['Tab']:
+                    self.ghost = False
+                if argv[1] == 'capture-pane' and self.ghost:
+                    text = '\x1b[2m' + preview + '\x1b[0m' if '-e' in argv else preview
+                    return __import__('types').SimpleNamespace(stdout='─' * 8 + '\n❯ ' + text + '\n' + '─' * 8)
+                result = super().__call__(argv, **kwargs)
+                result.stdout = result.stdout.replace(full, 'push it and continue with the next\n  product on the plan')
+                return result
+        pane = Pane(full, ghost=True)
+        with patch.object(terminal, 'verify'), patch.object(terminal.time, 'sleep'):
+            self.assertEqual(terminal.expand_suggestion(self.CLAUDE, preview, pane), full)
+        self.assertEqual(pane.text, '')
+        self.assertEqual(pane.enters, 0)
+
+    def test_expanding_does_not_overwrite_existing_terminal_draft(self):
+        with patch.object(terminal, 'verify'), patch.object(terminal, 'empty_prompt', side_effect=terminal.DraftError('draft')):
+            with self.assertRaises(terminal.DraftError):
+                terminal.expand_suggestion(self.CLAUDE, 'old suggestion…', run=lambda *a, **k: self.fail('sent a key'))
+
+    def test_expanding_does_not_clear_unexpected_or_still_clipped_text(self):
+        for draft in (['a different draft'], ['push it…'], ['']):
+            with self.subTest(draft=draft), patch.object(terminal, 'verify'), patch.object(terminal, 'empty_prompt'), \
+                    patch.object(terminal, 'suggestion', return_value='push it…'), \
+                    patch.object(terminal, 'prompt_draft', return_value=draft), \
+                    patch.object(terminal, 'clear_draft') as clear, patch.object(terminal.time, 'sleep'):
+                with self.assertRaises(terminal.DraftError):
+                    terminal.expand_suggestion(self.CLAUDE, 'push it…', run=lambda *a, **k: None)
+                clear.assert_not_called()
 
     def test_live_status_for_a_claude_with_no_conversation_yet(self):
         # A fresh Claude has no registry file yet; this used to raise KeyError and kill the background monitor.
@@ -539,6 +640,16 @@ class StatusTests(unittest.TestCase):
         self.assertEqual(self.status('codex', idle, transcript=self.rollout('task_started', 'task_complete')), 'Idle')
 
 
+def end_stream(connection, response, identifier='%x'):
+    """Hang up and wait for the server's stream thread to notice, so it never outlives the patches the test put on."""
+    response.close()  # the response holds its own reference to the socket
+    connection.close()
+    deadline = time.monotonic() + 5
+    while server.WATCHING.get(identifier) and time.monotonic() < deadline:
+        time.sleep(.05)
+    assert not server.WATCHING.get(identifier), 'the stream thread is still running'
+
+
 class StreamTests(unittest.TestCase):
     def setUp(self):
         proxy = patch.object(server.auth, 'MODE', 'proxy')  # these tests exercise the endpoints, not sign-in (see test_auth.py)
@@ -555,6 +666,7 @@ class StreamTests(unittest.TestCase):
              patch.object(server, 'chat_payload', side_effect=lambda c, shell=False, limit=150: {'messages': [], 'value': shared['n'] // 10}):
             httpd = ThreadingHTTPServer(('127.0.0.1', 0), server.Handler)
             threading.Thread(target=httpd.serve_forever, daemon=True).start()
+            self.addCleanup(httpd.server_close)
             self.addCleanup(httpd.shutdown)
             connection = http.client.HTTPConnection('127.0.0.1', httpd.server_address[1], timeout=5)
             self.addCleanup(connection.close)
@@ -575,6 +687,8 @@ class StreamTests(unittest.TestCase):
             started = time.monotonic()
             self.assertEqual(next_event()['value'], 1)
             self.assertLess(time.monotonic() - started, 2)
+            with patch.object(server, 'KEEPALIVE', .2):  # an idle stream only finds the hang-up when it next writes
+                end_stream(connection, response)
 
     def test_an_unchanged_chat_still_sends_a_named_idle_event(self):
         import http.client, threading
@@ -585,6 +699,7 @@ class StreamTests(unittest.TestCase):
              patch.object(server, 'chat_payload', return_value={'messages': []}):
             httpd = ThreadingHTTPServer(('127.0.0.1', 0), server.Handler)
             threading.Thread(target=httpd.serve_forever, daemon=True).start()
+            self.addCleanup(httpd.server_close)
             self.addCleanup(httpd.shutdown)
             connection = http.client.HTTPConnection('127.0.0.1', httpd.server_address[1], timeout=5)
             self.addCleanup(connection.close)
@@ -592,6 +707,7 @@ class StreamTests(unittest.TestCase):
             response = connection.getresponse()
             lines = [response.fp.readline().decode().strip() for _ in range(12)]
             self.assertIn('event: idle', lines)  # the page ignores comments, so only a named event keeps it from polling
+            end_stream(connection, response)
 
 
 class PushTests(unittest.TestCase):
@@ -823,6 +939,7 @@ class LiveScreenTests(unittest.TestCase):
              patch.object(server, 'capture_screen', side_effect=lambda config, lines: 'screen of %s (%d)' % (config['id'], lines)):
             httpd = ThreadingHTTPServer(('127.0.0.1', 0), server.Handler)
             threading.Thread(target=httpd.serve_forever, daemon=True).start()
+            self.addCleanup(httpd.server_close)
             self.addCleanup(httpd.shutdown)
             def get(query):
                 connection = http.client.HTTPConnection('127.0.0.1', httpd.server_address[1], timeout=5)
@@ -922,6 +1039,7 @@ class CodexThreadTests(unittest.TestCase):
     def database(self, rows):
         import sqlite3
         connection = sqlite3.connect(':memory:')
+        self.addCleanup(connection.close)
         connection.execute('CREATE TABLE threads (id TEXT, rollout_path TEXT, cwd TEXT, archived INT, source TEXT, created_at_ms INT, updated_at_ms INT)')
         connection.executemany('INSERT INTO threads VALUES (?,?,?,?,?,?,?)', rows)
         return connection
@@ -929,7 +1047,7 @@ class CodexThreadTests(unittest.TestCase):
     def started(self):
         import os
         ticks = os.sysconf('SC_CLK_TCK')
-        uptime = float(open('/proc/uptime').read().split()[0])
+        uptime = float(Path('/proc/uptime').read_text().split()[0])
         return str(int((uptime - 120) * ticks))  # this process "started" two minutes ago
 
     def test_old_conversation_in_the_same_directory_is_not_adopted(self):
@@ -1115,7 +1233,7 @@ class PickerEnterTests(unittest.TestCase):
     entry = {'id': '%1', 'agent': 'claude'}
 
     def setUp(self):
-        for target in (patch.object(terminal, 'verify'), patch.object(terminal.time, 'sleep')):
+        for target in (patch.object(terminal, 'verify'), patch.object(terminal, 'time', Mock(wraps=time, sleep=Mock()))):
             target.start()
             self.addCleanup(target.stop)
 
@@ -1252,5 +1370,148 @@ class SharedCacheTests(unittest.TestCase):
         self.assertEqual(len(reads), 1)
 
 
+class AntigravityCacheTests(unittest.TestCase):
+    def setUp(self):
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        self.folder = Path(folder.name)
+        patcher = patch.object(antigravity, 'CACHE', self.folder)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def report(self, name, mtime, **fields):
+        path = self.folder / (name + '.json')
+        path.write_text(json.dumps(fields))
+        os.utime(path, (mtime, mtime))
+
+    def test_a_report_file_older_than_the_process_is_not_borrowed(self):
+        now = time.time()
+        # the stale file claims the newest report, so only the file's age can keep it out
+        self.report('stale', now - 86400, cwd='/work', conversation_id='stale', reported_at=now + 60)
+        self.report('fresh', now, cwd='/work', conversation_id='fresh', reported_at=now)
+        self.assertEqual(antigravity.live_entry([os.getpid()], '/work')['thread'], 'fresh')
+
+    def test_the_newest_report_with_a_quota_stands_in_for_a_conversation_without_one(self):
+        now = time.time()
+        self.report('aaaaaaaa-bbbb-cccc-dddd-000000000001', now - 300, quota={'old': {}})
+        self.report('aaaaaaaa-bbbb-cccc-dddd-000000000002', now - 200, quota={'new': {}})
+        self.report('aaaaaaaa-bbbb-cccc-dddd-000000000003', now - 100)  # newest, but reports no quota
+        self.assertEqual(antigravity.account_quota(), {'quota': {'new': {}}})
+
+
+class TranscriptBusyCacheTests(unittest.TestCase):
+    def test_an_unchanged_file_is_not_read_again_and_a_changed_one_is(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / 'rollout.jsonl'
+            path.write_text('{"type": "task_started"}\n')
+            self.addCleanup(terminal._busy.clear)
+            self.assertTrue(terminal.transcript_busy(str(path)))
+            with patch('builtins.open', side_effect=AssertionError('read the file again')):
+                self.assertTrue(terminal.transcript_busy(str(path)))
+            path.write_text('{"type": "task_started"}\n{"type": "task_complete"}\n')
+            self.assertFalse(terminal.transcript_busy(str(path)))
+
+
 if __name__ == '__main__':
     unittest.main()
+
+
+class OpenCodeTests(unittest.TestCase):
+    def test_draft_ignores_tool_output_bars_and_placeholder(self):
+        from terminal_input import prompt_draft
+        entry = {'agent': 'opencode', 'id': '%1'}
+        def draft(screen):
+            with patch('terminal_input.capture', return_value=screen):
+                return prompt_draft(entry)
+        old = '  ┃  # Wrote x\n  ┃\n\n  ▣  Build\n'
+        self.assertEqual(draft(old + '  ┃\n  ┃  Ask anything…\n  ┃\n  ┃  Build · Model\n'), [])
+        self.assertEqual(draft(old + '  ┃\n  ┃  half typed\n  ┃\n  ┃  Build · Model\n'), ['half typed'])
+
+    def test_snapshot_reads_messages_and_actions(self):
+        import sqlite3, tempfile, opencode
+        path = Path(tempfile.mkdtemp()) / 'o.db'
+        db = sqlite3.connect(path)
+        db.executescript('CREATE TABLE session (id, directory, parent_id, time_created, time_updated, time_archived, model, cost);'
+                         'CREATE TABLE message (id, session_id, time_created, data);'
+                         'CREATE TABLE part (id, message_id, session_id, time_created, data);')
+        db.execute("INSERT INTO session VALUES ('ses_a','/w',NULL,1,2,NULL,'{\"id\":\"m1\"}',0.25)")
+        db.executemany('INSERT INTO message VALUES (?,?,?,?)', [('m1', 'ses_a', 1, '{"role":"user"}'),
+                       ('m2', 'ses_a', 2, '{"role":"assistant","tokens":{"total":9},"time":{"created":2}}')])
+        db.executemany('INSERT INTO part VALUES (?,?,?,?,?)', [
+            ('p1', 'm1', 'ses_a', 1, '{"type":"text","text":"hi"}'),
+            ('p2', 'm2', 'ses_a', 2, '{"type":"reasoning","text":"secret"}'),
+            ('p3', 'm2', 'ses_a', 3, '{"type":"tool","tool":"bash","state":{"input":{"command":"ls"}}}')])
+        db.commit()
+        with patch.object(opencode, 'DB', path):
+            data = opencode.snapshot({'thread': 'ses_a'}, str)
+        self.assertEqual([(m['role'], m.get('kind'), m.get('text')) for m in data['messages']][0], ('user', None, 'hi'))
+        self.assertEqual(data['messages'][1]['kind'], 'actions')
+        self.assertTrue(data['busy'])
+        self.assertEqual(data['usage']['context']['tokens'], 9)
+        self.assertEqual(data['usage']['cost'], 0.25)
+
+
+class OpenCodeApprovalTests(unittest.TestCase):
+    def screen(self, selected):
+        box, hot = '\x1b[48;2;30;30;30m', '\x1b[48;2;245;167;66m'
+        labels = ''.join((hot + ' ' + name + box + '  ') if index == selected else (box + name + '  ')
+                         for index, name in enumerate(('Allow once', 'Allow always', 'Reject')))
+        return ('  ┃  △ Permission required\n  ┃    # Shell command\n  ┃\n  ┃  $ echo hello\n  ┃\n'
+                '  ┃ ' + labels + '    ctrl+f fullscreen  ⇆ select\n')
+
+    def test_reads_options_and_selection_from_the_highlight(self):
+        found = terminal.opencode_approval(self.screen(1))
+        self.assertEqual([o['text'] for o in found['options']], ['Allow once', 'Allow always', 'Reject'])
+        self.assertEqual((found['_selected'], found['_once'], found['_reject']), (1, 0, 2))
+        self.assertIn('echo hello', found['text'])
+        self.assertEqual(found['id'], terminal.opencode_approval(self.screen(2))['id'])  # moving the cursor is the same request
+
+    def test_no_prompt_means_no_approval(self):
+        self.assertIsNone(terminal.opencode_approval('  ┃  Ask anything…\n'))
+
+
+class CodexSharedFolderTests(unittest.TestCase):
+    def db(self):
+        import sqlite3
+        db = sqlite3.connect(':memory:')
+        db.execute('CREATE TABLE threads (id TEXT, rollout_path TEXT, cwd TEXT, archived INT, source TEXT, created_at_ms INT, updated_at_ms INT)')
+        db.executemany('INSERT INTO threads VALUES (?,?,?,?,?,?,?)', [
+            ('old', '/r/old.jsonl', '/w', 0, 'cli', 1000, 9000), ('new', '/r/new.jsonl', '/w', 0, 'cli', 5000, 9500)])
+        return db
+
+    def test_older_pane_does_not_take_the_newer_panes_conversation(self):
+        import agents
+        with patch('agents.started_ms', return_value=1000), patch('agents.open_rollouts', return_value=set()), \
+             patch('agents.held_by_others', return_value={'/r/new.jsonl'}):
+            self.assertEqual(agents.codex_thread(self.db(), 1, '1', '/w')[0], 'old')
+
+    def test_open_conversation_file_names_the_thread(self):
+        import agents
+        with patch('agents.open_rollouts', return_value={'/r/new.jsonl'}):
+            self.assertEqual(agents.codex_thread(self.db(), 1, '1', '/w')[0], 'new')
+
+
+class CodexSharedAllowanceTests(unittest.TestCase):
+    def test_idle_tab_shows_the_newest_account_report(self):
+        rates = Path(tempfile.mkdtemp()) / 'rates.json'
+        rates.write_text(json.dumps({'windows': [{'label': '5h', 'percent': 18.0, 'resets_at': time.time() + 600}], 'reported_at': '2026-11-05T23:00:00Z'}))
+        older = ({}, [{'label': '5h', 'percent': 6.0, 'resets_at': time.time() + 600}], '2026-11-05T20:00:00Z')
+        with patch.object(server, 'RATES_FILE', rates), patch.object(server, 'capture', side_effect=OSError):
+            report = server.codex_metrics({}, older)
+        self.assertEqual(report['five_hour']['percent'], 18.0)
+        self.assertEqual(json.loads(rates.read_text())['windows'][0]['percent'], 18.0)  # the older tab must not overwrite it
+
+
+class CodexBannerTests(unittest.TestCase):
+    def test_banner_stops_at_conversation_and_refreshes_on_a_cleared_screen(self):
+        import terminal_replies
+        old = '>_ OpenAI Codex (v1)\n Model: X\n• Explored\n  Read a.md\n› hi\n'
+        self.assertEqual(terminal_replies.banner_text('codex', old), 'OpenAI Codex (v1)\nModel: X')
+        fresh = '  >_ OpenAI Codex (v1)\n     ~/w\n\n› Ask Codex to do anything\n'
+        entry = {'agent': 'codex', 'owner_pid': 1, 'process_start': '5'}
+        with patch.object(terminal_replies, 'CACHE', Path(tempfile.mkdtemp())):
+            terminal_replies.capture_banner(entry, lambda e: old)
+            terminal_replies.capture_banner(entry, lambda e: fresh)  # not cleared: the first banner is kept
+            self.assertIn('Model: X', terminal_replies.saved(entry)[0]['text'])
+            terminal_replies.capture_banner(entry, lambda e: fresh, refresh=True)
+            self.assertEqual(terminal_replies.saved(entry)[0]['text'], 'OpenAI Codex (v1)\n~/w')

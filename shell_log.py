@@ -48,8 +48,42 @@ def _save(pane, state):
 
 # ~/.bashrc stops early for non-interactive shells and starts a tmux menu for interactive ones, so neither can run here:
 # take just its alias lines, so "!dust" or "!ll" mean what they do in the terminal.
-ALIASES = ("shopt -s expand_aliases\n"
+ALIASES = ("{ [ -f ~/.profile ] && . ~/.profile; [ -f ~/.bash_profile ] && . ~/.bash_profile; } >/dev/null 2>&1\n"
+           "shopt -s expand_aliases\n"
            "for __f in ~/.bashrc ~/.bash_aliases; do [ -f \"$__f\" ] && eval \"$(grep -E '^[[:space:]]*alias[[:space:]]' \"$__f\")\"; done\n")
+
+# shortcut: guards ordinary tmux calls; use a restricted runner if arbitrary-shell enforcement is needed.
+TMUX_GUARD = r'''
+tmux() {
+    local arg rename=0 target=0 needs_target=0 command_seen=0 skip_option=0
+    for arg in "$@" ';'; do
+        if [[ "$arg" == ';' ]]; then
+            if (( rename && !target )); then
+                printf '%s\n' 'Refusing tmux rename without an explicit target. Use tmux rename-session -t =old-name new-name, or the Rename session button.' >&2
+                return 2
+            fi
+            rename=0 target=0 needs_target=0 command_seen=0 skip_option=0
+        elif (( skip_option )); then
+            skip_option=0
+        elif (( !command_seen )); then
+            case "$arg" in
+                -L|-S|-f|-c|-T) skip_option=1 ;;
+                -*) ;;
+                *) command_seen=1; [[ "$arg" == ren* ]] && rename=1 ;;
+            esac
+        elif (( needs_target )); then
+            [[ -n "$arg" && "$arg" != -* ]] && target=1
+            needs_target=0
+        else
+            case "$arg" in
+                -t) needs_target=1 ;;
+                -t?*) target=1 ;;
+            esac
+        fi
+    done
+    command tmux "$@"
+}
+'''
 
 
 def short(path):
@@ -71,9 +105,9 @@ def run(pane, command, start, agent_folder=None, owner=None):
         state = load(pane)
         folder = state.get('cwd') if os.path.isdir(state.get('cwd') or '') else start if os.path.isdir(start or '') else HOME
         token = uuid.uuid4().hex
-        script = ALIASES + command + '\n__rc=$?\nprintf "\\n' + token + '%s\\n" "$PWD"\nexit $__rc'
+        script = ALIASES + TMUX_GUARD + command + '\n__rc=$?\nprintf "\\n' + token + '%s\\n" "$PWD"\nexit $__rc'
         env = dict(os.environ, TERM='dumb', PAGER='cat', GIT_PAGER='cat', GIT_TERMINAL_PROMPT='0')
-        process = subprocess.Popen(['/bin/bash', '-lc', script], cwd=folder, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+        process = subprocess.Popen(['/bin/bash', '-c', script], cwd=folder, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                    stderr=subprocess.STDOUT, start_new_session=True)
         stopped = False
         try:

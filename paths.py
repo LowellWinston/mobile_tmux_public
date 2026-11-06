@@ -10,6 +10,8 @@ TMUX = os.environ.get('MOBILE_TMUX_TMUX') or shutil.which('tmux') or '/usr/bin/t
 
 CLAUDE = HOME / '.claude'
 CODEX = HOME / '.codex'
+OPENCODE = Path(os.environ.get('XDG_DATA_HOME') or HOME / '.local/share') / 'opencode'
+OPENCODE_MODELS = Path(os.environ.get('XDG_CACHE_HOME') or HOME / '.cache') / 'opencode/models.json'
 ANTIGRAVITY = HOME / '.gemini/antigravity-cli'
 
 

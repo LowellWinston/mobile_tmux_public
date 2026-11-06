@@ -15,7 +15,8 @@ import paths
 
 LAUNCHERS = {'codex': 'codex',
              'claude': 'claude',
-             'antigravity': 'agy'}
+             'antigravity': 'agy',
+             'opencode': 'opencode'}
 
 
 def create_session(name, cwd, run=subprocess.run):
@@ -92,6 +93,41 @@ def approval(screen):
             '_numbers': numbers,
             '_selected': selected, '_once': once,
             '_reject': next(i for i, c in enumerate(choices) if re.match(reject, c[2], re.I))}
+
+
+OC_HEADING = re.compile(r'△\s+(Permission required|Always allow)')
+OC_BACKGROUND = re.compile(r'\x1b\[(?:[0-9;]*;)?48;2;(\d+;\d+;\d+)m')
+
+
+def opencode_approval(styled):
+    """OpenCode's permission prompt: a row of options (Allow once / Allow always / Reject, then Confirm / Cancel for the
+    "always" step) moved with Left/Right. The selected option is the one drawn on a different background, so this reads the styled screen."""
+    lines = styled.splitlines()
+    plain = [ANSI_SGR.sub('', line) for line in lines]
+    heading = next((i for i in range(len(plain) - 1, -1, -1) if OC_HEADING.search(plain[i])), None)
+    if heading is None:
+        return None
+    row = next((i for i in range(heading + 1, len(plain)) if re.search(r'\b(?:Allow once|Confirm)\b', plain[i])), None)
+    if row is None:
+        return None
+    labels = [label for label in re.split(r'\s{2,}', re.split(r'ctrl\+f|⇆', plain[row].replace('┃', ' '))[0].strip()) if label]
+    chunks, background = [], None  # (background, text) pieces of the option row
+    for piece in re.split(r'(\x1b\[[0-9;]*m)', lines[row]):
+        if piece.startswith('\x1b['):
+            found = OC_BACKGROUND.match(piece)
+            background = found[1] if found else background
+        elif piece.strip():
+            chunks.append((background, piece))
+    box = chunks[-1][0] if chunks else None  # the unselected area is drawn in the box colour
+    selected = next((i for i, label in enumerate(labels) if any(label in text and shade != box for shade, text in chunks)), None)
+    body = [re.sub(r'^\s*┃\s?', '', line).rstrip() for line in plain[heading:row]]
+    text = '\n'.join(body[1:][-40:]).strip()
+    fingerprint = hashlib.sha256((body[0] + '\n' + text + '\n' + '|'.join(labels)).encode()).hexdigest()
+    return {'id': fingerprint, 'text': text, 'actionable': selected is not None and len(labels) >= 2,
+            'options': [{'id': number, 'text': label} for number, label in enumerate(labels, 1)],
+            '_numbers': list(range(1, len(labels) + 1)), '_selected': selected,
+            '_once': next((i for i, label in enumerate(labels) if label in ('Allow once', 'Confirm')), None),
+            '_reject': next((i for i, label in enumerate(labels) if label in ('Reject', 'Cancel')), len(labels) - 1)}
 
 
 ATTENTION_DELAY = 3
@@ -216,12 +252,12 @@ def live_status(entry, run=subprocess.run):
         capture_notices(entry, screen)
     else:
         capture_quota_notices(entry, screen)
-    pending = approval(screen)
+    pending = opencode_approval(capture(entry, run, styled=True)) if entry['agent'] == 'opencode' else approval(screen)
     if pending:
         if entry['agent'] == 'antigravity':
             pending['text'] = reflow_prompt(pending['text'])
         return {'state': 'Approval', 'approval': {k: v for k, v in pending.items() if not k.startswith('_')}}
-    working = bool(re.search(r'Working \(|esc to interrupt|(?m:^\s*[✻✶✽✢·*●]\s+[A-Z][a-z]+(?:ing|ed)?…)', screen, re.I))
+    working = bool(re.search(r'Working \(|esc to interrupt|esc interrupt|(?m:^\s*[✻✶✽✢·*●]\s+[A-Z][a-z]+(?:ing|ed)?…)', screen, re.I))
     if entry['agent'] == 'codex':
         working = working or transcript_busy(entry.get('transcript'))
     if entry['agent'] == 'claude' and entry.get('registry'):  # a Claude with no conversation yet has no registry
@@ -249,7 +285,7 @@ def live_status(entry, run=subprocess.run):
 def verify(entry, run=subprocess.run):
     pid = entry['owner_pid']
     process = Path('/proc') / str(pid)
-    valid_comm = {'claude': ('claude',), 'codex': ('codex',), 'antigravity': ('agy', 'exe')}[entry['agent']]
+    valid_comm = {'claude': ('claude',), 'codex': ('codex',), 'antigravity': ('agy', 'exe'), 'opencode': ('opencode',)}[entry['agent']]
     process_comm = process.joinpath('comm').read_text().strip()
     if process_start(pid) != entry['process_start'] or process_comm not in valid_comm:
         raise RuntimeError('The agent restarted. Reload its tab before sending.')
@@ -257,7 +293,7 @@ def verify(entry, run=subprocess.run):
                   '#{pane_pid}\t#{pane_current_command}\t#{pane_in_mode}'],
                  check=True, capture_output=True, text=True, timeout=5)
     root, command, mode = result.stdout.strip().split('\t')
-    if mode != '0' or command not in {'claude': ('claude',), 'codex': ('node', 'codex'), 'antigravity': ('agy', 'exe')}[entry['agent']]:
+    if mode != '0' or command not in {'claude': ('claude',), 'codex': ('node', 'codex'), 'antigravity': ('agy', 'exe'), 'opencode': ('opencode',)}[entry['agent']]:
         raise RuntimeError('Return to the agent prompt in Termius before sending.')
     ancestor = pid
     while ancestor != int(root) and ancestor > 1:
@@ -284,6 +320,17 @@ def verify(entry, run=subprocess.run):
                             raise RuntimeError('The Antigravity conversation changed. Reload its tab.')
                     except (OSError, ValueError):
                         pass
+    elif entry['agent'] == 'opencode':
+        if not entry.get('pending_conversation'):
+            from agents import started_ms
+            import opencode
+            db = opencode.connect()
+            try:
+                found = opencode.session_for(db, pid, started_ms(entry['process_start']), entry['cwd'])
+            finally:
+                db.close()
+            if found != entry['thread']:
+                raise RuntimeError('The OpenCode conversation changed. Reload its tab.')
     elif entry['agent'] == 'codex':
         if not entry.get('pending_conversation'):  # a new session has no conversation until its first message
             from agents import codex_database, codex_thread
@@ -302,10 +349,20 @@ class DraftError(RuntimeError):
 
 def prompt_draft(entry, run=subprocess.run):
     screen = capture(entry, run)
-    if approval(screen):
+    if approval(screen) or (entry['agent'] == 'opencode' and opencode_approval(capture(entry, run, styled=True))):
         raise RuntimeError('Respond to the pending approval before sending a message.')
-    marker = {'claude': '❯', 'codex': '›', 'antigravity': '>'}[entry['agent']]
     lines = screen.splitlines()
+    if entry['agent'] == 'opencode':
+        # The box is the last run of "┃" rows; its final row names the agent and model, and the empty box shows "Ask anything…".
+        box = []
+        for line in lines:
+            if line.strip().startswith('┃'):
+                box.append(line.strip().lstrip('┃').strip())
+            else:
+                box = []  # only the last unbroken run of bars is the input box; earlier ones are tool output
+        draft = [line for line in box[:-1] if line]
+        return [] if draft and draft[0].startswith('Ask anything') else draft
+    marker = {'claude': '❯', 'codex': '›', 'antigravity': '>'}[entry['agent']]
     prompts = [i for i, line in enumerate(lines) if line.startswith(marker)]
     if not prompts:
         raise RuntimeError('Cannot identify the agent input box. Check Termius before sending.')
@@ -379,6 +436,29 @@ def suggestion(entry, run=subprocess.run):
     """A reply Claude has prepared for the user, shown dimmed in the input box."""
     text = dim_prompt_text(capture(entry, run, styled=True))
     return '' if text == 'Press up to edit queued messages' or text.startswith('Try ') else text
+
+
+def expand_suggestion(entry, expected, run=subprocess.run):
+    """Accept a clipped ghost into Claude's editable prompt, read it, then clear our draft without submitting it."""
+    if entry.get('agent') != 'claude' or not isinstance(expected, str) or not expected.endswith('…'):
+        raise ValueError('Select a shortened Claude suggestion.')
+    verify(entry, run)
+    empty_prompt(entry, run)
+    if suggestion(entry, run) != expected:
+        raise RuntimeError('The suggestion changed. Wait for it to refresh and try again.')
+    run([paths.TMUX, 'send-keys', '-t', entry['id'], 'Tab'], check=True, capture_output=True, timeout=5)
+    for _ in range(10):
+        time.sleep(.1)
+        verify(entry, run)
+        draft = prompt_draft(entry, run)
+        if not any(draft):
+            continue
+        text = ' '.join(draft).strip()
+        if not text.startswith(expected[:-1]) or text.endswith('…'):
+            break
+        clear_draft(entry, run)
+        return text
+    raise DraftError('Could not read the full suggestion. Check the draft in Termius before retrying.')
 
 
 AGY_PANEL = re.compile(r'esc Close|↑/↓ Scroll|\(\d+–\d+ of \d+ lines\)|general\s+commands\s+shortcuts', re.I)
@@ -488,7 +568,10 @@ def respond_approval(entry, identifier, action=None, run=subprocess.run, choice=
     if choice is None and action not in ('approve', 'reject'):
         raise ValueError('Invalid approval action.')
     verify(entry, run)
-    pending = approval(capture(entry, run))
+    sideways = entry.get('agent') == 'opencode'  # its options sit in a row
+    read = (lambda: opencode_approval(capture(entry, run, styled=True))) if sideways else (lambda: approval(capture(entry, run)))
+    forward, back = ('Right', 'Left') if sideways else ('Down', 'Up')
+    pending = read()
     if not pending or pending['id'] != identifier or not pending['actionable']:
         raise RuntimeError('The approval changed. Reload and review it again.')
     if choice is not None:
@@ -503,14 +586,14 @@ def respond_approval(entry, identifier, action=None, run=subprocess.run, choice=
     expected = pending['_selected']
     for _ in range(abs(delta)):
         verify(entry, run)
-        current = approval(capture(entry, run))
+        current = read()
         if not current or current['id'] != identifier:
             raise RuntimeError('The approval changed. Review it again.')
-        run([paths.TMUX, 'send-keys', '-t', entry['id'], 'Down' if delta > 0 else 'Up'], check=True, capture_output=True, timeout=5)
+        run([paths.TMUX, 'send-keys', '-t', entry['id'], forward if delta > 0 else back], check=True, capture_output=True, timeout=5)
         expected += 1 if delta > 0 else -1
         deadline = time.monotonic() + .5
         while True:
-            current = approval(capture(entry, run))
+            current = read()
             if not current or current['id'] != identifier:
                 raise RuntimeError('The approval changed. Review it again.')
             if current['_selected'] == expected:
@@ -519,7 +602,7 @@ def respond_approval(entry, identifier, action=None, run=subprocess.run, choice=
                 raise RuntimeError('Could not confirm the approval selection. Check Termius.')
             time.sleep(.03)
     verify(entry, run)
-    current = approval(capture(entry, run))
+    current = read()
     if not current or current['id'] != identifier or current['_selected'] != target:
         raise RuntimeError('Could not confirm the selected approval choice. Review it in Termius.')
     run([paths.TMUX, 'send-keys', '-t', entry['id'], 'Enter'], check=True, capture_output=True, timeout=5)

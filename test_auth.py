@@ -31,7 +31,7 @@ class AuthTests(unittest.TestCase):
         self.folder.cleanup()
 
     def request(self, method, path, body=None, headers=None):
-        connection = http.client.HTTPConnection('127.0.0.1', self.port)
+        connection = http.client.HTTPConnection('127.0.0.1', self.port, timeout=5)
         connection.request(method, path, body=body, headers=dict({'Host': 'phone.test'}, **(headers or {})))
         response = connection.getresponse()
         data = response.read()
@@ -124,6 +124,7 @@ class AuthTests(unittest.TestCase):
         upstream = socket.socket()
         upstream.bind(('127.0.0.1', 0))
         upstream.listen(1)
+        self.addCleanup(upstream.close)
         seen = []
 
         def serve():

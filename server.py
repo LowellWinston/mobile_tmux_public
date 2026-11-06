@@ -14,8 +14,9 @@ from urllib.parse import parse_qs, unquote, urlsplit
 
 from agents import claude_snapshot, discover, usage
 from agents import records
+import opencode
 from antigravity import snapshot as antigravity_snapshot, window_active
-from terminal_input import DraftError, clear_draft as terminal_clear_draft, type_text, live_status, capture, capture_screen, submit as terminal_submit, respond_approval, start_agent, create_session, shell_snapshot, shell_submit, verify
+from terminal_input import DraftError, clear_draft as terminal_clear_draft, expand_suggestion, type_text, live_status, capture, capture_screen, submit as terminal_submit, respond_approval, start_agent, create_session, shell_snapshot, shell_submit, verify
 from quota_notices import error_message, merge as merge_quota_notices
 import activity
 import history
@@ -369,7 +370,18 @@ def codex_metrics(config, reported_usage, model=''):
     the context figure falls back to the terminal footer ("Context 97% left") until the first turn is recorded."""
     context, windows, reported = reported_usage or ({}, [], None)
     inherited = False
-    if windows:
+
+    def when(value):
+        try:
+            return datetime.fromisoformat(str(value).replace('Z', '+00:00')).timestamp()
+        except ValueError:
+            return 0
+    try:
+        newest = json.loads(RATES_FILE.read_text())
+        newest['windows']
+    except (OSError, ValueError, KeyError, TypeError):
+        newest = None
+    if windows and not (newest and when(newest.get('reported_at')) > when(reported)):
         saved = json.dumps({'windows': windows, 'reported_at': reported})
         if (str(RATES_FILE), saved) != LAST_RATES[0] or not RATES_FILE.exists():  # rewrite if the file moved or was deleted
             try:
@@ -378,13 +390,11 @@ def codex_metrics(config, reported_usage, model=''):
                 LAST_RATES[0] = (str(RATES_FILE), saved)
             except OSError:
                 pass
+    elif newest:  # allowances are account-wide: an idle tab shows the newest report any tab has seen, not its own old one
+        windows, reported, inherited = newest['windows'], newest.get('reported_at'), True
     else:
-        try:
-            saved = json.loads(RATES_FILE.read_text())
-            windows, reported, inherited = saved['windows'], saved.get('reported_at'), True
-        except (OSError, ValueError, KeyError, TypeError):
-            windows, reported = recent_rates()
-            inherited = bool(windows)
+        windows, reported = recent_rates()
+        inherited = bool(windows)
     try:
         screen = capture(config)
     except (OSError, ValueError, KeyError, subprocess.SubprocessError):
@@ -427,13 +437,22 @@ def snapshot(config=None):
             windows = [dict(w, active=window_active(w['label'], shown)) for w in data['usage']['windows']]
             data = dict(data, usage=dict(usage(data['usage']['context'], windows, data['usage']['reported_at']), model=shown))
         return dict(data, messages=terminal_replies.merge(config, data['messages'])) if isinstance(data.get('messages'), list) else data
+    if config.get('agent') == 'opencode':
+        terminal_replies.capture_banner(config, capture)
+        data = opencode.snapshot(config, display_text)
+        return dict(data, messages=terminal_replies.merge(config, data['messages']), thread=config['thread'], agent='opencode',
+                    writable=config['writable'], session=config['id'])
     if config.get('agent') in ('shell', 'antigravity') or config.get('ambiguous'):
         return {'messages': [], 'thread': None, 'agent': config['agent'], 'busy': False,
                 'writable': False, 'session': config['id'], 'usage': usage(),
                 'unsupported': ('Multiple Codex sessions share this directory; their conversation mapping is ambiguous. Use Termius until each is mapped explicitly.'
                                 if config.get('ambiguous') else ''
                                 if config.get('agent') == 'shell' else 'This session does not expose a supported chat transcript. Use Termius for this session.')}
-    terminal_replies.capture_banner(config, capture)
+    try:
+        cleared = fresh_codex_screen(capture(config))
+    except (OSError, ValueError, KeyError, subprocess.SubprocessError):
+        cleared = False
+    terminal_replies.capture_banner(config, capture, refresh=cleared)  # a cleared screen shows a new banner; the saved one is the old session's
     path = Path(config['transcript'])
     metrics = usage()
     if not path.is_file():
@@ -441,10 +460,6 @@ def snapshot(config=None):
                 'agent': 'codex', 'writable': config.get('writable', True), 'session': config.get('id')}
     state = history.read(path, codex_state, codex_consume)
     messages, busy = state['messages'], state['busy']
-    try:
-        cleared = fresh_codex_screen(capture(config))
-    except (OSError, ValueError, KeyError, subprocess.SubprocessError):
-        cleared = False
     if cleared:  # /clear starts a new conversation that has no history file yet; the old one must not show through
         messages, busy = [], False
         if state['usage']:
@@ -709,7 +724,7 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == '/mobile/login':
             self.do_login()
             return
-        if self.path not in ('/mobile/api/message', '/mobile/api/approval', '/mobile/api/start', '/mobile/api/session', '/mobile/api/tmux-sessions', '/mobile/api/key', '/mobile/api/clear-draft', '/mobile/api/type',
+        if self.path not in ('/mobile/api/message', '/mobile/api/approval', '/mobile/api/start', '/mobile/api/session', '/mobile/api/tmux-sessions', '/mobile/api/key', '/mobile/api/clear-draft', '/mobile/api/type', '/mobile/api/suggestion',
                          '/mobile/api/push/subscribe', '/mobile/api/push/unsubscribe', '/mobile/api/push/test', '/mobile/api/shortcuts', '/mobile/api/model-options', '/mobile/api/model', '/mobile/api/rename', '/mobile/api/shell', '/mobile/api/upload'):
             self.respond(404, {'error': 'Not found'})
             return
@@ -834,6 +849,11 @@ class Handler(BaseHTTPRequestHandler):
                 with SEND_LOCK:
                     type_text(config, body.get('text'), enter=body.get('enter') is True)
                 self.respond(200, {'accepted': True})
+                return
+            if self.path == '/mobile/api/suggestion':
+                with SEND_LOCK:
+                    text = expand_suggestion(config, body.get('text'))
+                self.respond(200, {'text': text})
                 return
             if self.path == '/mobile/api/clear-draft':
                 with SEND_LOCK:

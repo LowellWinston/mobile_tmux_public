@@ -8,6 +8,7 @@ import time
 from antigravity import live_entry as antigravity_entry, process_start
 from quota_notices import error_message, merge as merge_quota_notices
 import activity
+import opencode
 import history
 import paths
 
@@ -61,6 +62,33 @@ def started_ms(ticks):
     return int((boot + int(ticks) / os.sysconf('SC_CLK_TCK')) * 1000)
 
 
+def open_rollouts(pid):
+    """The conversation files this process has open right now (Codex keeps its own one open while it writes)."""
+    found = set()
+    try:
+        for link in (Path('/proc') / str(pid) / 'fd').iterdir():
+            target = os.readlink(link)
+            if target.endswith('.jsonl') and 'rollout-' in target:
+                found.add(target)
+    except OSError:
+        pass
+    return found
+
+
+def held_by_others(pid):
+    """Conversation files that another pane's Codex process has open: they are not this pane's. The shared app-server
+    holds the files of every conversation it serves, so it says nothing about which pane owns one."""
+    held = set()
+    for entry in Path('/proc').glob('[0-9]*'):
+        if entry.name != str(pid):
+            try:
+                if (entry / 'comm').read_text().strip() == 'codex' and b'app-server' not in (entry / 'cmdline').read_bytes():
+                    held |= open_rollouts(entry.name)
+            except OSError:
+                continue
+    return held
+
+
 def codex_thread(connection, pid, ticks, cwd):
     """The conversation this Codex process is running: the one named by `codex resume <id>`, else the newest one in
     its directory that was created or touched since the process started. None while it has not begun a conversation."""
@@ -73,10 +101,16 @@ def codex_thread(connection, pid, ticks, cwd):
             row = connection.execute('SELECT id,rollout_path FROM threads WHERE id=?', (arguments[index + 1],)).fetchone()
             if row:
                 return row
+    for path in open_rollouts(pid):  # exact: this process is writing that conversation
+        row = connection.execute('SELECT id,rollout_path FROM threads WHERE rollout_path=?', (path,)).fetchone()
+        if row:
+            return row
     since = started_ms(ticks) - 60_000
-    return connection.execute(
+    others = held_by_others(pid)  # shortcut: a conversation not open anywhere is still guessed by time, so two idle panes in one folder can swap
+    rows = connection.execute(
         "SELECT id,rollout_path FROM threads WHERE cwd=? AND archived=0 AND source IN ('cli','vscode') "
-        "AND (created_at_ms>=? OR updated_at_ms>=?) ORDER BY updated_at_ms DESC LIMIT 1", (cwd, since, since)).fetchone()
+        "AND (created_at_ms>=? OR updated_at_ms>=?) ORDER BY updated_at_ms DESC", (cwd, since, since)).fetchall()
+    return next((row for row in rows if row[1] not in others), None)
 
 
 def match_unresolved_codex(connection, entries):
@@ -175,6 +209,16 @@ def discover(config, run):
                     pending = 'pending-' + str(owner) + '-' + started
                     entry.update(agent='codex', thread=pending, transcript=str(HOME / '.codex/sessions/pending' / (pending + '.jsonl')),
                                  writable=True, cwd=cwd, owner_pid=owner, process_start=started, pending_conversation=True)
+            elif 'opencode' in names:
+                owner = next(p for p in tree if p in processes and processes[p][1] == 'opencode')
+                started = process_start(owner)
+                db = opencode.connect()
+                try:
+                    thread = opencode.session_for(db, owner, started_ms(started), cwd)
+                finally:
+                    db.close()
+                entry.update(agent='opencode', thread=thread or 'pending-' + str(owner) + '-' + started, transcript=str(opencode.DB),
+                             writable=True, owner_pid=owner, process_start=started, pending_conversation=not thread)
             elif 'agy' in names or any(processes[p][1] in ('agy', 'exe') for p in tree if p in processes):
                 entry['agent'] = 'antigravity'
                 entry.update(antigravity_entry([p for p in tree if p in processes and processes[p][1] in ('agy', 'exe')], cwd=cwd))
@@ -253,7 +297,7 @@ def claude_consume(messages, index, record, clean):
     text = content if isinstance(content, str) else '\n'.join(
         item.get('text', '') for item in content if item.get('type') == 'text')
     text = clean(text)
-    if text.strip() and not text.startswith(('<system-reminder>', '<local-command', '<command-name>')):
+    if text.strip() and not text.startswith(('<system-reminder>', '<local-command', '<command-name>', '<task-notification>')):
         item = {'id': str(index), 'role': role, 'text': text, 'time': record.get('timestamp')}
         if role == 'assistant' and record.get('isApiErrorMessage') and error_message(dict(record, message=text)):
             item['kind'] = 'notice'

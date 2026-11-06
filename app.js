@@ -15,11 +15,12 @@ const send = document.querySelector('#send');
 const notice = document.querySelector('#notice');
 const rendered = new Map();
 const views = new Map();
-const agentNames = {codex: 'Codex', claude: 'Claude', antigravity: 'Antigravity', shell: 'Shell'};
+const agentNames = {codex: 'Codex', claude: 'Claude', antigravity: 'Antigravity', opencode: 'OpenCode', shell: 'Shell'};
 const agentIcons = {
   codex: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 6-6 6 6 6m8-12 6 6-6 6M14 3l-4 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   claude: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2v20M2 12h20M5 5l14 14M5 19 19 5M8 3l8 18M3 8l18 8M3 16l18-8M8 21 16 3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>',
   antigravity: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m3 20 9-17 9 17M6 15h12" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  opencode: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 2h14v20H5zM9 10h6v8H9z" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round"/></svg>',
   shell: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4 6 6 6-6 6m9 0h7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>'
 };
 let selected = null, thread = null, agent = 'codex', writable = false;
@@ -52,8 +53,27 @@ stopButton.addEventListener('click', async () => {
   finally { stopButton.disabled = false; }
 });
 const suggestion = document.querySelector('#suggestion');
-suggestion.firstElementChild.addEventListener('click', () => {
-  input.value = suggestion.firstElementChild.dataset.text; saveDraft(); resizeInput(); suggestion.hidden = true; input.focus({preventScroll: true});
+suggestion.firstElementChild.addEventListener('click', async () => {
+  const button = suggestion.firstElementChild, session = selected, conversation = thread;
+  let text = button.dataset.text;
+  button.disabled = true;
+  try {
+    if (text.endsWith('…')) {
+      const response = await fetch('/mobile/api/suggestion', {method: 'POST', headers: {'Content-Type': 'application/json', 'X-Codex-Mobile': '1'},
+        body: JSON.stringify({session, thread: conversation, text})});
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Could not read the full suggestion.');
+      text = data.text;
+    }
+    if (selected !== session || thread !== conversation) {
+      const key = 'chat-draft:' + session + ':' + conversation;
+      if (!localStorage.getItem(key)) localStorage.setItem(key, text);
+      return;
+    }
+    if (input.value) return;
+    input.value = text; saveDraft(); resizeInput(); suggestion.hidden = true; input.focus({preventScroll: true});
+  } catch (error) { showNotice(error.message); }
+  finally { button.disabled = false; }
 });
 function setState(session, state) {
   const button = chatTabs().find(button => button.dataset.session === session);
@@ -272,6 +292,11 @@ function meters() {
     return old ? {percent: 0, resets: null, renewed: true} : null;
   };
   const context = usageData.context || {};
+  const cost = typeof usageData.cost === 'number' ? [{key: '$', name: 'Cost', text: '$' + usageData.cost.toFixed(2)}] : [];
+  const contextMeter = {key: 'C', name: 'Context', percent: typeof context.percent === 'number' ? context.percent : undefined,
+     detail: context.tokens != null && context.limit ? compact(context.tokens) + ' / ' + compact(context.limit) : context.tokens != null ? compact(context.tokens) + ' tokens' : ''};
+  // OpenCode has no 5-hour or weekly allowance: it reports what the session has cost instead.
+  if (cost.length) return [...cost, contextMeter].map(item => ({...item, percent: typeof item.percent === 'number' ? Math.max(0, Math.min(100, item.percent)) : null}));
   return [
     {key: '5h', name: '5-hour', ...allowance('five_hour', ['five_hour'], ['5h', 'five hour'])},
     {key: 'wk', name: 'Weekly', ...allowance('weekly', ['weekly'], ['168h', 'seven day', 'weekly'])},
@@ -294,8 +319,10 @@ function drawCombo() {
     const label = document.createElement('span'); label.className = 'um-name'; label.textContent = item.key;
     const bar = document.createElement('span'); bar.className = 'um-bar';
     const fill = document.createElement('i'); fill.style.width = (item.percent || 0) + '%'; fill.style.background = level(item.percent);
-    bar.append(fill); row.append(label, bar); rows.push(row);
-    parts.push(item.key + ' ' + (item.percent == null ? 'n/a' : Math.round(item.percent) + '%'));
+    bar.append(fill);
+    if (item.text) { bar.className = 'um-text'; bar.textContent = item.text; }
+    row.append(label, bar); rows.push(row);
+    parts.push(item.key + ' ' + (item.text || (item.percent == null ? 'n/a' : Math.round(item.percent) + '%')));
   }
   const combo = document.querySelector('#usage-combo');
   combo.replaceChildren(...rows); combo.title = parts.join(' · ');
@@ -314,6 +341,7 @@ function usageDetails() {
   };
   const heading = document.createElement('p'); heading.textContent = (agentNames[agent] || agent) + (usageData.model ? ' · ' + usageData.model : ''); heading.className = 'usage-title'; details.append(heading);
   for (const item of meters()) {
+    if (item.text) { row(item.name, 0, item.text); continue; }
     const percent = item.percent == null ? 'n/a' : Math.round(item.percent) + '%';
     const extra = item.detail || (item.renewed ? 'renewed' : item.resets ? 'resets in ' + until(item.resets) : '');
     row(item.name, item.percent, percent + (extra ? ' · ' + extra : ''));
